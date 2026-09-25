@@ -16,9 +16,11 @@
 
 ## 预览
 
-结果揭晓：内定赢家的颜色向外扩散覆盖整屏并停留，轻点任意处重置。
+| 等待 | 读条 | 结果揭晓 |
+|---|---|---|
+| ![等待手指](docs/preview_waiting.png) | ![读条](docs/preview_readout.png) | ![结果揭晓](docs/preview_result.png) |
 
-![结果揭晓画面](docs/screenshot_result.jpg)
+以下预览图由 `tools/render_preview.py` 按真实绘制规格离屏渲染。读满出结果后，内定赢家的颜色向外扩散覆盖整屏并停留，轻点任意处重置。
 
 ## 特性
 
