@@ -7,13 +7,12 @@
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 W, H = 1080, 2400
 D = 2.75  # 演示按 440dpi 屏的密度换算 dp/sp
 
 BG = (6, 6, 6)
-HINT = (255, 255, 255, 138)          # #8AFFFFFF
 POINTER_COLORS = [
     (255, 214, 10),   # p0 黄
     (255, 45, 149),   # p1 品红
@@ -22,8 +21,6 @@ POINTER_COLORS = [
 ]
 RING = (255, 255, 255)
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "docs")
-
-FONT_PATH = r"C:\Windows\Fonts\msyh.ttc"
 
 
 def base_radius(n):
@@ -62,16 +59,8 @@ def draw_readout_arc(draw, x, y, r, color, progress):
     draw.arc(bbox, start=-90, end=-90 + 360 * progress, fill=color + (255,), width=w)
 
 
-def text_center(draw, y, s, font):
-    bbox = draw.textbbox((0, 0), s, font=font)
-    tw = bbox[2] - bbox[0]
-    draw.text(((W - tw) / 2, y), s, font=font, fill=HINT)
-
-
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    font_hint = ImageFont.truetype(FONT_PATH, int(16 * D))
-    font_num = ImageFont.truetype(FONT_PATH, int(28 * D))
 
     r0 = base_radius(3)
     # —— 等待：三根手指已就位（呼吸中段） ——
@@ -92,13 +81,12 @@ def main():
         draw_readout_arc(d, x, y, r4, POINTER_COLORS[i], 0.7)
     im.save(os.path.join(OUT_DIR, "preview_readout.png"))
 
-    # —— 结果揭晓：内定赢家颜色扩散覆盖整屏 ——
+    # —— 结果揭晓：内定赢家颜色扩散覆盖整屏（满屏色 + 白圈，无文字） ——
     im = Image.new("RGB", (W, H), POINTER_COLORS[0])
     d = ImageDraw.Draw(im, "RGBA")
     wx, wy = 300, 1150
     wr = r0 * 1.25
     draw_pointer(im, d, wx, wy, wr, POINTER_COLORS[0], ring=True)
-    text_center(d, 60 * D, "就是你了！", font_hint)
     im.save(os.path.join(OUT_DIR, "preview_result.png"))
 
     print("done:", os.listdir(OUT_DIR))

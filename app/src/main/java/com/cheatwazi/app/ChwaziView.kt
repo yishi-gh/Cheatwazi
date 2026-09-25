@@ -484,6 +484,7 @@ class ChwaziView @JvmOverloads constructor(
                         engine.winnerIds.size == 1
                 if (singleWinner) {
                     // 单赢家：赢家色从触点向外扩散覆盖全屏并停留，轻点重置
+                    // 满屏色 + 白圈大圆已是完整表达，不再叠加文字
                     val spot = engine.resultSpots.first { it.winner }
                     val cIndex = spot.colorIndex % pointerColors.size
                     val spread = ((now - engine.resultAt).toFloat() / GameEngine.SPREAD_MS)
@@ -496,7 +497,7 @@ class ChwaziView @JvmOverloads constructor(
                     circlePaint.alpha = 255
                     canvas.drawCircle(spot.x, spot.y, coverR * easeOutQuad(spread), circlePaint)
 
-                    // 赢家圆点 + 白圈呼吸，压在扩散层之上
+                    // 赢家圆点 + 白圈呼吸
                     val breathe = 1f + 0.10f * sin(now / 400.0).toFloat()
                     val wr = baseRadius * 1.25f * breathe
                     drawTouchCircle(
@@ -504,10 +505,6 @@ class ChwaziView @JvmOverloads constructor(
                         pointerCenterColors[cIndex], pointerColors[cIndex], 1f
                     )
                     canvas.drawCircle(spot.x, spot.y, wr, winnerRingPaint)
-
-                    canvas.drawText(
-                        context.getString(R.string.hint_winner), w / 2f, topHintY, hintPaint
-                    )
                 } else if (engine.cfg.mode == GameEngine.MODE_WINNERS) {
                     // 多赢家：逐个淘汰后剩余高亮
                     val dtResult = maxOf(0L, now - engine.resultAt)
