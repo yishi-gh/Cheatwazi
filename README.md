@@ -3,8 +3,8 @@
 复刻原版 Chwazi 手指挑选玩法，并支持通过隐蔽的物理信号把结果"内定"给指定的人。
 
 ![platform](https://img.shields.io/badge/platform-Android%207.0%2B-3DDC84)
-![version](https://img.shields.io/badge/version-1.0.0-blue)
-![license](https://img.shields.io/badge/license-MIT-green)
+![release](https://img.shields.io/github/v/release/yishi-gh/Cheatwazi)
+![license](https://img.shields.io/github/license/yishi-gh/Cheatwazi)
 
 ## 简介
 
@@ -16,16 +16,18 @@
 
 ## 预览
 
+预览图由 `tools/render_preview.py` 按真实绘制规格离屏渲染：
+
 | 等待 | 读条 | 结果揭晓 |
 |---|---|---|
 | ![等待手指](docs/preview_waiting.png) | ![读条](docs/preview_readout.png) | ![结果揭晓](docs/preview_result.png) |
 
-以下预览图由 `tools/render_preview.py` 按真实绘制规格离屏渲染。读满出结果后，内定赢家的颜色向外扩散覆盖整屏并停留，轻点任意处重置。
+读满出结果后，内定赢家的颜色向外扩散覆盖整屏并停留，轻点任意处重置。
 
 ## 特性
 
 - 原版玩法：多点触控识别、彩色触点圆、就位读条、逐个淘汰动画、柔和音效与震动反馈（独立开关）
-- 两种模式：选出 1~10 个赢家，或随机分成 2~5 队
+- 两种模式：选出 1-10 个赢家，或随机分成 2-5 队
 - 三条内定通道：用力按压 / 倾斜指向（可指定任何人）/ 快速微抬，可独立开关
 - 设备自检前置：未完成自检不能启用作弊，不支持的通道自动禁用并说明原因
 - 三档灵敏度：隐蔽 / 标准 / 灵敏，滑条下方实时显示三通道的具体触发阈值
