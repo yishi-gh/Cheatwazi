@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#060606</color>
+    <color name="hint_text">#8AFFFFFF</color>
+
+    <!-- 触点 10 色循环 -->
+    <color name="p0">#FFD60A</color>
+    <color name="p1">#FF2D95</color>
+    <color name="p2">#00E5FF</color>
+    <color name="p3">#76FF03</color>
+    <color name="p4">#B388FF</color>
+    <color name="p5">#FF9500</color>
+    <color name="p6">#4D8DFF</color>
+    <color name="p7">#FF3B30</color>
+    <color name="p8">#2CE8A4</color>
+    <color name="p9">#FF6EA0</color>
+
+    <!-- 分队 5 色 -->
+    <color name="t0">#FFD60A</color>
+    <color name="t1">#00E5FF</color>
+    <color name="t2">#FF2D95</color>
+    <color name="t3">#76FF03</color>
+    <color name="t4">#B388FF</color>
+
+    <color name="winner_ring">#FFFFFF</color>
+</resources>

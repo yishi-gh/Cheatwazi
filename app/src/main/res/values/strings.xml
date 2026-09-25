@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Cheatwazi</string>
+
+    <!-- 主界面状态提示 -->
+    <string name="hint_winner">就是你了！</string>
+    <string name="hint_team">分队完成</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">Cheatwazi 设置</string>
+    <string name="game_section">游戏</string>
+    <string name="mode_label">游戏模式</string>
+    <string name="mode_winners">选出赢家</string>
+    <string name="mode_teams">随机分队</string>
+    <string name="winner_count_label">赢家数量：%d</string>
+    <string name="team_count_label">队伍数量：%d</string>
+    <string name="haptics_label">震动反馈</string>
+    <string name="sound_label">音效</string>
+
+    <string name="cheat_section">作弊引擎</string>
+    <string name="cheat_enabled_label">启用作弊</string>
+    <string name="channel_pressure">用力按压 → 自己赢</string>
+    <string name="channel_tilt">倾斜指向 → 指定的人赢</string>
+    <string name="channel_lift">快速微抬 → 自己赢</string>
+    <string name="sensitivity_label">灵敏度：%s</string>
+    <string name="sens_0">隐蔽</string>
+    <string name="sens_1">标准</string>
+    <string name="sens_2">灵敏</string>
+
+    <string name="selftest_label">设备自检</string>
+    <string name="selftest_hint">按住下方区域查看压力 / 接触面积读数</string>
+    <string name="selftest_pressure_ok">压力通道：可用</string>
+    <string name="selftest_pressure_dead">压力通道：本机数值恒定，不可用</string>
+    <string name="selftest_tilt_ok">姿态通道：可用</string>
+    <string name="selftest_tilt_dead">姿态通道：本机无加速度计，不可用</string>
+    <string name="selftest_readout">压力 %.3f　面积 %.3f　倾斜 %.1f°</string>
+
+    <string name="howto_title">使用说明</string>
+    <string name="howto_body">所有手势都在读条期间生效（人齐后的约 2.4 秒窗口），动作保持自然：\n\n1. 让自己赢 —— 稍微用力按住屏幕不放，或手指快速抬起立即按回（半秒内）。\n\n2. 指定别人赢 —— 把手机朝他那侧轻轻压低并保持半秒，倾斜的下坡方向指向谁，谁就赢。\n\n3. 分队模式同样有效 —— 被指定的人会被分进第 1 组（黄色、数字 1 的那组），其余人随机均分。\n\n4. 进入设置 —— 在等待界面用手指画一个小三角形（接近闭合即可）。\n\n灵敏度越低越难被察觉，但也越难触发；建议先用上方自检区确认本机压力通道是否可用。无信号时行为与正常随机完全一致。</string>
+</resources>
