@@ -7,8 +7,7 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.RadialGradient
-import android.graphics.Shader
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -25,7 +24,6 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -37,7 +35,13 @@ import kotlin.math.sin
 
 /**
  * 全屏自定义 View，承载多人手指挑选器的触控采集与动画绘制。
- * 视觉风格对齐原版 Chwazi：纯黑底 + 高饱和彩色触点圆。
+ * 视觉与动画逐项对齐原版 Chwazi（经反编译观察其绘制行为，未复制任何代码/资产）：
+ *  - 触点 = 大色盘（0.73R）+ 细缝 + 粗外环带（0.20R），落下时整体从 0.3 过冲弹入、
+ *    色环自 0 扫入一圈，之后持续呼吸（±6.25%、约 0.95s 周期、随机相位）；
+ *  - 决策 = 浅色弧带沿外环带扫入一圈（人一变动即快速退回露出色环，全员重新画圈）；
+ *  - 结果 = 赢家色从屏幕四边向赢家位置合拢，只留约 2 倍圆大的孔露出其呼吸的圆；
+ *    输家保持 1.2s 后同时缩小消失；退出时赢家圆收缩到圆心，黑色自圆心向四周扩散；
+ *  - 顶栏 = 原版样式的模式下拉（FINGER / FINGERS / GROUPS 胶囊 + 数量圆钮）。
  */
 class ChwaziView @JvmOverloads constructor(
     context: Context,
@@ -48,59 +52,83 @@ class ChwaziView @JvmOverloads constructor(
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
 
-    // —— 颜色资源 ——
+    // —— 颜色资源（每色三档：主体 / 描边 / 浅色读条弧） ——
     private val bgColor = ContextCompat.getColor(context, R.color.bg)
-    private val hintTextColor = ContextCompat.getColor(context, R.color.hint_text)
-    private val winnerRingColor = ContextCompat.getColor(context, R.color.winner_ring)
 
     private val pointerColorResIds = intArrayOf(
         R.color.p0, R.color.p1, R.color.p2, R.color.p3, R.color.p4,
         R.color.p5, R.color.p6, R.color.p7, R.color.p8, R.color.p9,
     )
-    private val pointerColors = IntArray(pointerColorResIds.size) {
+    private val pointerRingResIds = intArrayOf(
+        R.color.p0r, R.color.p1r, R.color.p2r, R.color.p3r, R.color.p4r,
+        R.color.p5r, R.color.p6r, R.color.p7r, R.color.p8r, R.color.p9r,
+    )
+    private val pointerClearResIds = intArrayOf(
+        R.color.p0c, R.color.p1c, R.color.p2c, R.color.p3c, R.color.p4c,
+        R.color.p5c, R.color.p6c, R.color.p7c, R.color.p8c, R.color.p9c,
+    )
+    private val mainColors = IntArray(pointerColorResIds.size) {
         ContextCompat.getColor(context, pointerColorResIds[it])
     }
-    private val pointerCenterColors = IntArray(pointerColors.size) {
-        brightenColor(pointerColors[it], 0.08f)
+    private val ringColors = IntArray(pointerRingResIds.size) {
+        ContextCompat.getColor(context, pointerRingResIds[it])
+    }
+    private val clearColors = IntArray(pointerClearResIds.size) {
+        ContextCompat.getColor(context, pointerClearResIds[it])
     }
 
-    private val teamColorResIds = intArrayOf(
-        R.color.t0, R.color.t1, R.color.t2, R.color.t3, R.color.t4,
-    )
-    private val teamColors = IntArray(teamColorResIds.size) {
-        ContextCompat.getColor(context, teamColorResIds[it])
-    }
-    private val teamCenterColors = IntArray(teamColors.size) {
-        brightenColor(teamColors[it], 0.08f)
-    }
+    private val teamMainResIds = intArrayOf(R.color.t0, R.color.t1, R.color.t2, R.color.t3, R.color.t4)
+    private val teamRingResIds = intArrayOf(R.color.t0r, R.color.t1r, R.color.t2r, R.color.t3r, R.color.t4r)
+    private val teamClearResIds = intArrayOf(R.color.t0c, R.color.t1c, R.color.t2c, R.color.t3c, R.color.t4c)
+    private val teamMainColors = IntArray(teamMainResIds.size) { ContextCompat.getColor(context, teamMainResIds[it]) }
+    private val teamRingColors = IntArray(teamRingResIds.size) { ContextCompat.getColor(context, teamRingResIds[it]) }
+    private val teamClearColors = IntArray(teamClearResIds.size) { ContextCompat.getColor(context, teamClearResIds[it]) }
 
     // —— 画笔 ——
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
-    private val winnerRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 3f * density
-        color = winnerRingColor
     }
 
-    private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f * density
-        strokeCap = Paint.Cap.ROUND
+    private val darkDiscPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
     }
 
-    private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = hintTextColor
-        textSize = 16f * scaledDensity
-        textAlign = Paint.Align.CENTER
+    // —— 顶栏菜单画笔 ——
+    private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = PILL_BG
     }
-
-    private val teamNumPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+    private val pillSelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = PILL_SEL
+    }
+    private val pillLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = MENU_TEXT
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
+        textSize = 15f * scaledDensity
+    }
+    private val menuNumPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = MENU_TEXT
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        textSize = 18f * scaledDensity
+    }
+    private val menuRowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = MENU_TEXT
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        textSize = 14f * scaledDensity
+    }
+    private val chipTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = MENU_TEXT
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        textSize = 14f * scaledDensity
     }
 
     // —— 引擎、音效与震动 ——
@@ -171,6 +199,22 @@ class ChwaziView @JvmOverloads constructor(
     // —— 隐蔽设置入口：等待界面用手指画一个小三角 ——
     private val gesturePoints = ArrayList<Pair<Float, Float>>()
 
+    // —— 成员变动与读条锚点：全员色环重扫（成员变动）/ 读条弧退回+扫入（锚点重置） ——
+    private var lastMembership = ""
+    private var membershipChangedAt = 0L
+    private var lastSpinStart = -1L
+    private var loaderResetAt = -1L
+    private var loaderPrevValue = 0f
+
+    // —— 顶栏模式下拉 ——
+    private var menuOpen = false
+    private var panelMode = GameEngine.MODE_WINNERS
+    private val pillRect = RectF()
+    private val numRect = RectF()
+    private val panelRect = RectF()
+    private val modeRows = ArrayList<Pair<RectF, Int>>()
+    private val chipRects = ArrayList<Pair<RectF, Int>>()
+
     init {
         (context as? LifecycleOwner)?.lifecycle?.addObserver(LifecycleEventObserver { _, event ->
             when (event) {
@@ -209,16 +253,22 @@ class ChwaziView @JvmOverloads constructor(
         val cheatEngine = CheatEngine(cheatCfg)
         val newEngine = GameEngine(gameCfg, cheatEngine, returnDistPx)
         newEngine.latestGravity = cachedGravity
+        newEngine.ordinalTargets = snapshot.ordinalTargets
 
         newEngine.events = object : GameEngine.Events {
             override fun onFingerDown(p: Pointer) {
-                if (snapshot.hapticsOn) vibrate(10L)
+                // 对齐原版：按压不振动，只有音效
                 if (snapshot.soundOn) playPop(p.colorIndex)
             }
 
             override fun onResult() {
                 if (snapshot.hapticsOn) vibrateResult()
                 if (snapshot.soundOn) playWin()
+                // 序号内定一次性：本局已消费则清除持久化设置
+                if (engine.ordinalApplied) {
+                    Prefs.setOrdinalTargets(context, emptySet())
+                    engine.clearOrdinalApplied()
+                }
             }
         }
 
@@ -303,11 +353,34 @@ class ChwaziView @JvmOverloads constructor(
     // 触控处理
     // ==========================================
 
+    private fun menuVisible(): Boolean =
+        ::engine.isInitialized &&
+            engine.phase == GameEngine.Phase.WAITING &&
+            engine.pointers.isEmpty()
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!::engine.isInitialized) return true
         val now = SystemClock.uptimeMillis()
         val actionIndex = event.actionIndex
+
+        // —— 顶栏模式下拉：仅等待界面无触点时可交互，打开期间吞掉全部触摸 ——
+        if (menuOpen) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                handleMenuTouch(event.getX(actionIndex), event.getY(actionIndex))
+            }
+            postInvalidateOnAnimation()
+            return true
+        }
+        if (menuVisible() && event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val mx = event.getX(actionIndex)
+            val my = event.getY(actionIndex)
+            if (pillRect.contains(mx, my) || numRect.contains(mx, my)) {
+                handleMenuTouch(mx, my)
+                postInvalidateOnAnimation()
+                return true
+            }
+        }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN,
@@ -385,6 +458,59 @@ class ChwaziView @JvmOverloads constructor(
     }
 
     // ==========================================
+    // 顶栏模式下拉
+    // ==========================================
+
+    private fun handleMenuTouch(x: Float, y: Float) {
+        if (!menuOpen) {
+            if (pillRect.contains(x, y) || numRect.contains(x, y)) {
+                menuOpen = true
+                panelMode = engine.cfg.mode
+            }
+            return
+        }
+        for ((r, code) in modeRows) {
+            if (!r.contains(x, y)) continue
+            when (code) {
+                ROW_MULTI -> {
+                    // FINGERS 统一涵盖 1..8 名赢家，切换模式不改动赢家数量
+                    panelMode = GameEngine.MODE_WINNERS
+                    applyMenuSelection(GameEngine.MODE_WINNERS)
+                }
+                else -> {
+                    panelMode = GameEngine.MODE_TEAMS
+                    applyMenuSelection(GameEngine.MODE_TEAMS)
+                }
+            }
+            return
+        }
+        for ((r, value) in chipRects) {
+            if (!r.contains(x, y)) continue
+            if (panelMode == GameEngine.MODE_WINNERS) {
+                applyMenuSelection(GameEngine.MODE_WINNERS, winnerCount = value)
+            } else {
+                applyMenuSelection(GameEngine.MODE_TEAMS, teamCount = value)
+            }
+            menuOpen = false
+            return
+        }
+        menuOpen = false   // 点在面板外：收起
+    }
+
+    private fun applyMenuSelection(mode: Int, winnerCount: Int? = null, teamCount: Int? = null) {
+        val current = Prefs.load(context)
+        Prefs.save(
+            context,
+            current.copy(
+                mode = mode,
+                winnerCount = winnerCount ?: current.winnerCount,
+                teamCount = teamCount ?: current.teamCount,
+            )
+        )
+        reloadConfig()
+    }
+
+    // ==========================================
     // 主循环与绘制
     // ==========================================
 
@@ -405,10 +531,9 @@ class ChwaziView @JvmOverloads constructor(
             return
         }
 
-        // 触点基础半径：min(w,h)*0.085，人数>5 时再乘 (5f/n)^0.35
+        // 触点基础半径：屏短边约 25%（直径），人数>5 时再乘 (5f/n)^0.35
         val minDim = minOf(w, h)
-        var baseRadius = minDim * 0.085f
-        // RESULT 用揭晓瞬间的快照人数，避免手指离场后半径漂移
+        var baseRadius = minDim * 0.125f
         val count = if (engine.phase == GameEngine.Phase.RESULT) {
             engine.resultSpots.size
         } else {
@@ -418,158 +543,39 @@ class ChwaziView @JvmOverloads constructor(
             baseRadius *= (5f / count.toFloat()).toDouble().pow(0.35).toFloat()
         }
 
-        val topHintY = 60f * density
+        // 成员变动锚点：色环全员重扫；读条锚点变化（读条重启）触发读条弧退回
+        val membershipKey = engine.pointers.joinToString(",") { "${it.id}:${it.isDown}" }
+        if (membershipKey != lastMembership) {
+            loaderPrevValue = currentLoaderValue(now)
+            lastMembership = membershipKey
+            membershipChangedAt = now
+            loaderResetAt = now
+        }
+        if (engine.spinStartAt != lastSpinStart) {
+            if (loaderResetAt < 0 || now - loaderResetAt > 50) {
+                loaderPrevValue = currentLoaderValue(now)
+                loaderResetAt = now
+            }
+            lastSpinStart = engine.spinStartAt
+        }
 
         when (engine.phase) {
-            GameEngine.Phase.WAITING -> {
-                // 等待：触点按下弹入 scale 0→1（150ms ease-out-back，基准 downTime）
-                for (p in engine.pointers) {
-                    if (!p.isDown) continue
-                    val dt = now - p.downTime
-                    val scale = if (dt <= 0L) {
-                        0f
-                    } else if (dt >= 150L) {
-                        1f
-                    } else {
-                        easeOutBack(dt / 150f)
-                    }
-                    val r = baseRadius * scale
-                    val cIndex = p.colorIndex % pointerColors.size
-                    drawTouchCircle(
-                        canvas, p.x, p.y, r,
-                        pointerCenterColors[cIndex], pointerColors[cIndex], 1f
-                    )
-                }
-            }
-
-            GameEngine.Phase.READY -> {
-                // 稳定期：触点呼吸
-                val breatheScale = 1f + 0.10f * sin(now / 400.0).toFloat()
-                val r = baseRadius * breatheScale
-                for (p in engine.pointers) {
-                    if (!p.isDown) continue
-                    val cIndex = p.colorIndex % pointerColors.size
-                    drawTouchCircle(
-                        canvas, p.x, p.y, r,
-                        pointerCenterColors[cIndex], pointerColors[cIndex], 1f
-                    )
-                }
+            GameEngine.Phase.WAITING, GameEngine.Phase.READY -> {
+                drawFingers(canvas, now, baseRadius, withLoader = false)
             }
 
             GameEngine.Phase.SPIN -> {
-                // 读条：触点保持呼吸，外围读条进度弧，读满出结果
-                val breatheScale = 1f + 0.10f * sin(now / 400.0).toFloat()
-                val r = baseRadius * breatheScale
-                val progress = engine.readoutProgress(now)
-                val arcGap = 7f * density
-                for (p in engine.pointers) {
-                    if (!p.isDown) continue
-                    val cIndex = p.colorIndex % pointerColors.size
-                    drawTouchCircle(
-                        canvas, p.x, p.y, r,
-                        pointerCenterColors[cIndex], pointerColors[cIndex], 1f
-                    )
-                    arcPaint.color = pointerColors[cIndex]
-                    canvas.drawArc(
-                        p.x - r - arcGap, p.y - r - arcGap,
-                        p.x + r + arcGap, p.y + r + arcGap,
-                        -90f, 360f * progress, false, arcPaint
-                    )
-                }
+                drawFingers(canvas, now, baseRadius, withLoader = true)
             }
 
             GameEngine.Phase.RESULT -> {
-                // 全部基于揭晓瞬间的快照绘制，手指是否仍在屏不影响画面
-                val singleWinner = engine.cfg.mode == GameEngine.MODE_WINNERS &&
-                        engine.winnerIds.size == 1
-                if (singleWinner) {
-                    // 单赢家：赢家色从触点向外扩散覆盖全屏并停留，轻点重置
-                    // 满屏色 + 白圈大圆已是完整表达，不再叠加文字
-                    val spot = engine.resultSpots.first { it.winner }
-                    val cIndex = spot.colorIndex % pointerColors.size
-                    val spread = ((now - engine.resultAt).toFloat() / GameEngine.SPREAD_MS)
-                        .coerceIn(0f, 1f)
-                    val coverR = hypot(maxOf(spot.x, w - spot.x), maxOf(spot.y, h - spot.y)) +
-                            baseRadius
-
-                    circlePaint.shader = null
-                    circlePaint.color = pointerColors[cIndex]
-                    circlePaint.alpha = 255
-                    canvas.drawCircle(spot.x, spot.y, coverR * easeOutQuad(spread), circlePaint)
-
-                    // 赢家圆点 + 白圈呼吸
-                    val breathe = 1f + 0.10f * sin(now / 400.0).toFloat()
-                    val wr = baseRadius * 1.25f * breathe
-                    drawTouchCircle(
-                        canvas, spot.x, spot.y, wr,
-                        pointerCenterColors[cIndex], pointerColors[cIndex], 1f
-                    )
-                    canvas.drawCircle(spot.x, spot.y, wr, winnerRingPaint)
-                } else if (engine.cfg.mode == GameEngine.MODE_WINNERS) {
-                    // 多赢家：逐个淘汰后剩余高亮
-                    val dtResult = maxOf(0L, now - engine.resultAt)
-                    val winnerPopProgress = (dtResult / 250f).coerceIn(0f, 1f)
-                    val winnerPop = 1f + 0.25f * easeOutBack(winnerPopProgress)
-                    val winnerBreathe = 0.10f * sin(now / 400.0).toFloat()
-                    val winnerScale = winnerPop + winnerBreathe
-                    val winnerRadius = baseRadius * winnerScale
-
-                    for (spot in engine.resultSpots) {
-                        if (spot.winner) {
-                            val cIndex = spot.colorIndex % pointerColors.size
-                            drawTouchCircle(
-                                canvas, spot.x, spot.y, winnerRadius,
-                                pointerCenterColors[cIndex], pointerColors[cIndex], 1f
-                            )
-                            canvas.drawCircle(spot.x, spot.y, winnerRadius, winnerRingPaint)
-                        } else if (spot.eliminateOffset >= 0) {
-                            // 淘汰触点在 resultAt+偏移 起 260ms 内 scale 1→0 且 alpha 1→0
-                            val startTime = engine.resultAt + spot.eliminateOffset
-                            if (now >= startTime && elimFiredIds.add(spot.id)) {
-                                if (soundOn) playElim()
-                                if (hapticsOn) vibrate(30L)
-                            }
-                            if (now < startTime) {
-                                val cIndex = spot.colorIndex % pointerColors.size
-                                drawTouchCircle(
-                                    canvas, spot.x, spot.y, baseRadius,
-                                    pointerCenterColors[cIndex], pointerColors[cIndex], 1f
-                                )
-                            } else if (now < startTime + 260L) {
-                                val progress = (now - startTime).toFloat() / 260f
-                                val scale = (1f - progress).coerceIn(0f, 1f)
-                                val alpha = (1f - progress).coerceIn(0f, 1f)
-                                val r = baseRadius * scale
-                                val cIndex = spot.colorIndex % pointerColors.size
-                                drawTouchCircle(
-                                    canvas, spot.x, spot.y, r,
-                                    pointerCenterColors[cIndex], pointerColors[cIndex], alpha
-                                )
-                            }
-                        }
-                    }
-                    canvas.drawText(
-                        context.getString(R.string.hint_winner), w / 2f, topHintY, hintPaint
-                    )
-                } else {
-                    // 分队：全员按组号画组色
-                    teamNumPaint.textSize = baseRadius * 0.9f
-                    val fm = teamNumPaint.fontMetrics
-                    val textYOffset = (fm.top + fm.bottom) / 2f
-
-                    for (spot in engine.resultSpots) {
-                        val ti = spot.team.coerceIn(0, teamColors.size - 1)
-                        drawTouchCircle(
-                            canvas, spot.x, spot.y, baseRadius,
-                            teamCenterColors[ti], teamColors[ti], 1f
-                        )
-                        canvas.drawText((ti + 1).toString(), spot.x, spot.y - textYOffset, teamNumPaint)
-                    }
-                    canvas.drawText(
-                        context.getString(R.string.hint_team), w / 2f, topHintY, hintPaint
-                    )
-                }
+                drawResult(canvas, now, baseRadius, w, h)
             }
+        }
+
+        // 顶栏模式下拉：仅等待且无触点时显示（原版同款布局）
+        if (menuVisible()) {
+            drawTopMenu(canvas)
         }
 
         // 空闲停刷：等待且无触点时没有动画可播，停止持续重绘省电
@@ -577,51 +583,276 @@ class ChwaziView @JvmOverloads constructor(
         if (!idle) postInvalidateOnAnimation()
     }
 
-    // ==========================================
-    // 绘图辅助函数
-    // ==========================================
+    /** 读条弧当前值 0..1：退回段（锚点重置后 300ms）从上次值回落，之后重新扫入 */
+    private fun currentLoaderValue(now: Long): Float {
+        if (engine.phase != GameEngine.Phase.SPIN || loaderResetAt < 0) return 0f
+        val sinceReset = now - loaderResetAt
+        if (sinceReset < LOADER_RECEDE_MS) {
+            return loaderPrevValue * (1f - sinceReset.toFloat() / LOADER_RECEDE_MS)
+        }
+        val linear = ((sinceReset - LOADER_RECEDE_MS).toFloat() / LOADER_SWEEP_MS).coerceIn(0f, 1f)
+        return accelDecel(linear)
+    }
 
-    private fun drawTouchCircle(
+    /** 在屏触点：各自弹入（按下起 450ms 过冲）+ 色环全员重扫 + 持续呼吸；读条阶段叠加浅色读条弧 */
+    private fun drawFingers(canvas: Canvas, now: Long, baseRadius: Float, withLoader: Boolean) {
+        val sinceChange = now - membershipChangedAt
+        val ringSweep = 360f * accelDecel((sinceChange.toFloat() / SWEEP_MS).coerceIn(0f, 1f))
+        val loaderValue = currentLoaderValue(now)
+
+        for (p in engine.pointers) {
+            val idx = p.colorIndex % 10
+            if (p.isDown) {
+                // 弹入按各自按下时刻（对齐原版 per-player grow）；复活按回不重播
+                val growT = ((now - p.downTime).toFloat() / GROW_MS).coerceIn(0f, 1f)
+                val grow = 0.3f + 0.7f * easeOutBack(growT)
+                val r = baseRadius * grow * breath(now, p.id)
+                drawFingerCircle(canvas, p.x, p.y, r, mainColors[idx], ringColors[idx], ringSweep)
+                if (withLoader) {
+                    drawArcBand(canvas, p.x, p.y, r, clearColors[idx], 360f * loaderValue)
+                }
+            } else {
+                // 按回等待窗口内的离场触点：整体缩小消失（对齐原版 dying）
+                val dt = now - p.liftTime
+                if (dt < DIE_MS) {
+                    drawFingerCircle(
+                        canvas, p.x, p.y, baseRadius * (1f - dt.toFloat() / DIE_MS),
+                        mainColors[idx], ringColors[idx], ringSweep
+                    )
+                }
+            }
+        }
+    }
+
+    /** 单赢家结果：赢家色自四边合拢只留呼吸的赢家圆；退出时圆缩到圆心、黑色自圆心扩散 */
+    private fun drawResult(canvas: Canvas, now: Long, baseRadius: Float, w: Float, h: Float) {
+        val singleWinner = engine.cfg.mode == GameEngine.MODE_WINNERS && engine.winnerIds.size == 1
+        val exitT = if (engine.exitingAt >= 0) now - engine.exitingAt else -1L
+
+        // —— 底层：结果快照里的各触点圆 ——
+        for (spot in engine.resultSpots) {
+            val idx = spot.colorIndex % 10
+            val main: Int
+            val ring: Int
+            if (engine.cfg.mode == GameEngine.MODE_TEAMS) {
+                val ti = spot.team.coerceIn(0, 4)
+                main = teamMainColors[ti]
+                ring = teamRingColors[ti]
+            } else {
+                main = mainColors[idx]
+                ring = ringColors[idx]
+            }
+            val scale: Float = when {
+                singleWinner && spot.winner -> 0f          // 赢家圆在挖孔层单独绘制
+                engine.cfg.mode == GameEngine.MODE_WINNERS && !spot.winner -> {
+                    // 输家：保持 1.2s 后同时缩小消失
+                    val dt = now - engine.resultAt - GameEngine.LOSER_DIE_DELAY_MS
+                    when {
+                        dt < 0f -> 1f
+                        dt < DIE_MS -> {
+                            if (elimFiredIds.add(spot.id)) playElim()
+                            1f - dt / DIE_MS.toFloat()
+                        }
+                        else -> 0f
+                    }
+                }
+                exitT >= 0 -> (1f - (exitT.toFloat() / DIE_MS).coerceIn(0f, 1f)) // 退出：同时缩小
+                else -> 1f
+            }
+            if (scale > 0f) {
+                drawFingerCircle(
+                    canvas, spot.x, spot.y, baseRadius * scale * breath(now, spot.id),
+                    main, ring, 360f
+                )
+            }
+        }
+        if (!singleWinner) return
+
+        // —— 单赢家：反向遮罩 flood（孔在赢家位置，孔外全部为赢家色） ——
+        val spot = engine.resultSpots.first { it.winner }
+        val idx = spot.colorIndex % 10
+        val winnerColor = mainColors[idx]
+        val holeFrom = hypot(maxOf(spot.x, w - spot.x), maxOf(spot.y, h - spot.y)) + baseRadius
+        val holeTo = baseRadius * HOLE_TO_RATIO
+
+        // 退出动画（全部松手延迟 RESULT_EXIT_DELAY_MS 后触发，此时合拢早已完成）：
+        // 赢家圆 300ms 缩到圆心消失 → 黑色 300ms 自圆心向四周扩散
+        val shrink = if (exitT >= 0) 1f - (exitT.toFloat() / DIE_MS).coerceIn(0f, 1f) else 1f
+        val holeR = if (exitT < 0) {
+            val floodT = ((now - engine.resultAt).toFloat() / FLOOD_MS).coerceIn(0f, 1f)
+            holeFrom - (holeFrom - holeTo) * decelerate(floodT)
+        } else if (exitT < DIE_MS) {
+            holeTo
+        } else {
+            holeTo + (holeFrom - holeTo) *
+                decelerate(((exitT - DIE_MS).toFloat() / HOLE_OPEN_MS).coerceIn(0f, 1f))
+        }
+
+        canvas.drawColor(winnerColor)
+        darkDiscPaint.color = bgColor
+        canvas.drawCircle(spot.x, spot.y, holeR, darkDiscPaint)
+        // 孔内露出呼吸中的赢家圆；退出时随收缩同步缩小到圆心消失
+        if (shrink > 0f) {
+            drawFingerCircle(
+                canvas, spot.x, spot.y, baseRadius * shrink * breath(now, spot.id),
+                mainColors[idx], ringColors[idx], 360f
+            )
+        }
+    }
+
+    /** 原版触点样式：大色盘（0.73R）+ 细缝 + 粗外环带（0.20R），环带可部分扫入 */
+    private fun drawFingerCircle(
         canvas: Canvas,
         x: Float,
         y: Float,
         radius: Float,
-        centerColor: Int,
-        edgeColor: Int,
-        alpha: Float,
+        mainColor: Int,
+        ringColor: Int,
+        ringSweepDeg: Float,
     ) {
-        if (radius <= 0.001f || alpha <= 0.001f) return
-        val clampedAlpha = alpha.coerceIn(0f, 1f)
-        val actualCenter = applyAlpha(centerColor, clampedAlpha)
-        val actualEdge = applyAlpha(edgeColor, clampedAlpha)
+        if (radius <= 0.001f) return
+        circlePaint.color = mainColor
+        canvas.drawCircle(x, y, radius * DISC_RATIO, circlePaint)
+        drawArcBand(canvas, x, y, radius, ringColor, ringSweepDeg)
+    }
 
-        circlePaint.alpha = (clampedAlpha * 255).toInt()
-        circlePaint.shader = RadialGradient(
-            x, y, radius,
-            actualCenter, actualEdge,
-            Shader.TileMode.CLAMP
+    /** 环带弧：外径 R、带宽 0.20R，从 -90° 起扫 ringSweepDeg */
+    private fun drawArcBand(canvas: Canvas, x: Float, y: Float, radius: Float, color: Int, sweepDeg: Float) {
+        if (radius <= 0.001f || sweepDeg <= 0f) return
+        ringPaint.color = color
+        ringPaint.strokeWidth = radius * RING_WIDTH
+        val rr = radius * RING_MID_RATIO
+        canvas.drawArc(x - rr, y - rr, x + rr, y + rr, -90f, sweepDeg.coerceAtMost(360f), false, ringPaint)
+    }
+
+    /** 呼吸：±6.25%、约 0.95s 周期，相位随触点 id 错开（对齐原版随机相位） */
+    private fun breath(now: Long, id: Int): Float =
+        1f + sin(now / 152f + id * 2.399963f) / 16f
+
+    private fun drawTopMenu(canvas: Canvas) {
+        val w = width.toFloat()
+        val pad = dp(16f)
+        pillRect.set(pad, pad, pad + dp(140f), pad + dp(45f))
+        numRect.set(w - pad - dp(45f), pad, w - pad, pad + dp(45f))
+
+        pillPaint.color = PILL_BG
+        canvas.drawRoundRect(pillRect, dp(22.5f), dp(22.5f), pillPaint)
+        canvas.drawCircle(numRect.centerX(), numRect.centerY(), dp(22.5f), pillPaint)
+
+        pillLabelPaint.color = MENU_TEXT
+        drawCenteredText(
+            canvas, pillLabelPaint,
+            when {
+                engine.cfg.mode == GameEngine.MODE_TEAMS -> "GROUPS"
+                else -> "FINGERS"
+            },
+            pillRect.centerX(), pillRect.centerY()
         )
-        canvas.drawCircle(x, y, radius, circlePaint)
+        menuNumPaint.color = MENU_TEXT
+        val shown = if (engine.cfg.mode == GameEngine.MODE_TEAMS) {
+            engine.cfg.teamCount
+        } else {
+            engine.cfg.winnerCount
+        }
+        drawCenteredText(canvas, menuNumPaint, shown.toString(), numRect.centerX(), numRect.centerY())
+
+        if (!menuOpen) {
+            modeRows.clear()
+            chipRects.clear()
+            return
+        }
+
+        // 下拉面板：模式行 + 数量圆片
+        modeRows.clear()
+        chipRects.clear()
+        val rowH = dp(40f)
+        val rowGap = dp(4f)
+        val values = if (panelMode == GameEngine.MODE_TEAMS) (2..5).toList() else (1..8).toList()
+        val chip = dp(36f)
+        val chipGap = dp(6f)
+        val perRow = 4
+        val chipRows = (values.size + perRow - 1) / perRow
+        val panelH = dp(10f) + 2 * rowH + rowGap + dp(8f) +
+                chipRows * chip + (chipRows - 1) * chipGap + dp(10f)
+        panelRect.set(dp(16f), pad + dp(45f) + dp(8f), dp(16f) + dp(176f), 0f)
+        panelRect.bottom = panelRect.top + panelH
+        pillPaint.color = PILL_BG
+        canvas.drawRoundRect(panelRect, dp(12f), dp(12f), pillPaint)
+
+        val rows = listOf(
+            "FINGERS" to ROW_MULTI,
+            "GROUPS" to ROW_TEAMS,
+        )
+        var y = panelRect.top + dp(10f)
+        for ((text, code) in rows) {
+            val r = RectF(panelRect.left + dp(10f), y, panelRect.right - dp(10f), y + rowH)
+            val selected = when (code) {
+                ROW_MULTI -> engine.cfg.mode == GameEngine.MODE_WINNERS
+                else -> engine.cfg.mode == GameEngine.MODE_TEAMS
+            }
+            if (selected) {
+                canvas.drawRoundRect(r, dp(20f), dp(20f), pillSelPaint)
+            }
+            menuRowPaint.color = MENU_TEXT
+            drawCenteredText(canvas, menuRowPaint, text, r.centerX(), r.centerY())
+            modeRows.add(r to code)
+            y += rowH + rowGap
+        }
+        y += dp(4f)
+
+        for (i in values.indices) {
+            val row = i / perRow
+            val col = i % perRow
+            val cx = panelRect.left + dp(10f) + chip / 2 + col * (chip + chipGap)
+            val cy = y + chip / 2 + row * (chip + chipGap)
+            val value = values[i]
+            val active = if (panelMode == GameEngine.MODE_WINNERS) {
+                engine.cfg.mode == GameEngine.MODE_WINNERS && engine.cfg.winnerCount == value
+            } else {
+                engine.cfg.mode == GameEngine.MODE_TEAMS && engine.cfg.teamCount == value
+            }
+            if (active) {
+                pillPaint.color = MENU_TEXT
+                canvas.drawCircle(cx, cy, chip / 2f, pillPaint)
+                chipTextPaint.color = Color.WHITE
+            } else {
+                pillPaint.color = CHIP_BG
+                canvas.drawCircle(cx, cy, chip / 2f, pillPaint)
+                chipTextPaint.color = MENU_TEXT
+            }
+            drawCenteredText(canvas, chipTextPaint, value.toString(), cx, cy)
+            chipRects.add(RectF(cx - chip / 2, cy - chip / 2, cx + chip / 2, cy + chip / 2) to value)
+        }
     }
 
-    private fun applyAlpha(color: Int, alpha: Float): Int {
-        val a = (Color.alpha(color) * alpha).toInt().coerceIn(0, 255)
-        return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+    private fun drawCenteredText(canvas: Canvas, paint: Paint, text: String, cx: Float, cy: Float) {
+        val fm = paint.fontMetrics
+        canvas.drawText(text, cx, cy - (fm.ascent + fm.descent) / 2f, paint)
     }
 
-    private fun brightenColor(color: Int, amount: Float = 0.08f): Int {
-        val hsl = FloatArray(3)
-        ColorUtils.colorToHSL(color, hsl)
-        hsl[2] = (hsl[2] + amount).coerceIn(0f, 1f)
-        return ColorUtils.HSLToColor(hsl)
+    // ==========================================
+    // 插值器与辅助
+    // ==========================================
+
+    /** 减速：1-(1-t)^2（对应原版 DecelerateInterpolator） */
+    private fun decelerate(t: Float): Float {
+        val x = t.coerceIn(0f, 1f)
+        return 1f - (1f - x) * (1f - x)
     }
 
+    /** 先加速后减速（对应原版 AccelerateDecelerateInterpolator） */
+    private fun accelDecel(t: Float): Float {
+        val x = t.coerceIn(0f, 1f)
+        return if (x < 0.5f) 2f * x * x else 1f - (-2f * x + 2f).pow(2) / 2f
+    }
+
+    /** 过冲弹入（对应原版 OvershootInterpolator） */
     private fun easeOutBack(t: Float, overshoot: Float = 1.70158f): Float {
         val x = t - 1f
         return 1f + (overshoot + 1f) * x * x * x + overshoot * x * x
     }
 
-    private fun easeOutQuad(t: Float): Float = t * (2f - t)
+    private fun dp(value: Float): Float = value * density
 
     /**
      * 三角形手势判定：轨迹重采样为等弧长方向序列，恰好两次大转向（≥40°）
@@ -675,5 +906,28 @@ class ChwaziView @JvmOverloads constructor(
     companion object {
         /** 重力一阶低通系数：50Hz 采样下时间常数约 130ms，保留半秒级倾斜信号 */
         private const val LPF_ALPHA = 0.15f
+
+        // —— 触点几何（相对半径 R 的比例，对齐原版） ——
+        private const val DISC_RATIO = 0.66f     // 中心色盘半径（与环带间留 0.14R 缝隙）
+        private const val RING_WIDTH = 0.20f     // 外环带宽
+        private const val RING_MID_RATIO = 0.90f // 环带中线半径
+        private const val HOLE_TO_RATIO = 2.0f   // 结果孔半径（约 2 倍触点外径）
+
+        // —— 动画时长（ms） ——
+        private const val GROW_MS = 450L          // 落下弹入（0.3 → 过冲 → 1）
+        private const val SWEEP_MS = 1000L        // 色环扫入一圈
+        private const val LOADER_RECEDE_MS = 300L // 成员变动后读条弧退回
+        private const val LOADER_SWEEP_MS = 1600L // 读条弧扫入一圈（引擎 SPIN_MS = 两者之和）
+        private const val DIE_MS = 300L           // 离场/消失收缩
+        private const val FLOOD_MS = 300L         // 结果赢家色合拢
+        private const val HOLE_OPEN_MS = 300L     // 消失时黑色扩散
+
+        // —— 顶栏菜单 ——
+        private const val PILL_BG = 0xFFE9ECEC.toInt()
+        private const val PILL_SEL = 0xFFD3DADC.toInt()
+        private const val CHIP_BG = 0xFFFDFDFD.toInt()
+        private const val MENU_TEXT = 0xFF5F6E6E.toInt()
+        private const val ROW_MULTI = 1
+        private const val ROW_TEAMS = 2
     }
 }

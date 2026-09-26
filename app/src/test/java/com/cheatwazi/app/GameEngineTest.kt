@@ -19,9 +19,9 @@ class GameEngineTest {
         ids.forEachIndexed { i, id -> e.onDown(id, i * 100f, 0f, i * 50L, 1f, 0f) }
         e.tick(2000)     // READY（stableSince=2000）
         e.tick(2800)     // 800ms 稳定 → 读条（spinStart=2800）
-        e.tick(4400)     // 1600ms 读条 → RESULT
+        e.tick(4700)     // 1900ms 读条 → RESULT
         assertEquals(GameEngine.Phase.RESULT, e.phase)
-        return 4400L
+        return 4700L
     }
 
     @Test
@@ -37,6 +37,14 @@ class GameEngineTest {
         val e = engine(winnerCount = 2)
         runToResult(e, listOf(1, 2, 3, 4))
         assertEquals(2, e.winnerIds.size)
+        assertEquals(2, e.eliminateAt.size)
+    }
+
+    @Test
+    fun winnerCount_cappedAtMaxWinners() {
+        val e = engine(winnerCount = 10)          // 超出上限 8 时截断
+        runToResult(e, (1..10).toList())
+        assertEquals(GameEngine.MAX_WINNERS, e.winnerIds.size)
         assertEquals(2, e.eliminateAt.size)
     }
 
@@ -80,7 +88,7 @@ class GameEngineTest {
         assertEquals(1, cheat.sealedTargetId)
         assertEquals(GameEngine.Phase.READY, e.phase)
         e.tick(3000)                                 // 稳定期重新计时后读条
-        e.tick(4600)                                 // 读条结束
+        e.tick(4900)                                 // 读条结束
         assertEquals(GameEngine.Phase.RESULT, e.phase)
         assertEquals(listOf(1), e.winnerIds)         // 内定目标保证入选
     }
@@ -98,7 +106,7 @@ class GameEngineTest {
         e.onDown(2, 100f, 0f, 2200, 1f, 0f)
         assertTrue(cheat.fired)
         e.tick(3000)
-        e.tick(4600)
+        e.tick(4900)
         assertEquals(2, e.winnerIds.first())
     }
 
@@ -114,7 +122,7 @@ class GameEngineTest {
         e.onDown(3, 200f, 0f, 2300, 1f, 0f)
         e.onDown(4, 300f, 0f, 2400, 1f, 0f)
         e.tick(4000)
-        e.tick(5600)
+        e.tick(5900)
         assertEquals(GameEngine.Phase.RESULT, e.phase)
         assertEquals(4, e.teamOf.size)
         val counts = e.teamOf.values.groupingBy { it }.eachCount()
@@ -124,25 +132,121 @@ class GameEngineTest {
     }
 
     @Test
-    fun resultPhase_holdsUntilTap() {
+    fun resultPhase_tapsIgnored() {
         val e = engine()
         val resultAt = runToResult(e, listOf(1, 2))
         e.onUp(1, resultAt + 10)
         e.onUp(2, resultAt + 10)
-        e.tick(resultAt + 500)                       // 全部抬起也不自动重置
+        // 对齐原版：结果期间轻点既不重置也不加入（保护期内外一致）
+        e.onDown(9, 50f, 50f, resultAt + 200, 1f, 0f)
+        e.onDown(9, 50f, 50f, resultAt + 3000, 1f, 0f)
         assertEquals(GameEngine.Phase.RESULT, e.phase)
-        e.onDown(9, 50f, 50f, resultAt + 900, 1f, 0f) // 覆盖停留 0.8s 后轻点重置
-        assertEquals(GameEngine.Phase.WAITING, e.phase)
+        assertEquals(1, e.winnerIds.size)
+        assertTrue(e.pointers.none { it.id == 9 })
+    }
+
+    @Test
+    fun resultPhase_noExitWithoutLift() {
+        val e = engine()
+        val resultAt = runToResult(e, listOf(1, 2))
+        // 手指一直按着不抬：结果画面常驻，不进入消失动画
+        e.tick(resultAt + 30000)
+        assertEquals(GameEngine.Phase.RESULT, e.phase)
+        assertEquals(-1L, e.exitingAt)
+    }
+
+    @Test
+    fun resultPhase_oneFingerHolds_noExit() {
+        val e = engine()
+        val resultAt = runToResult(e, listOf(1, 2))
+        e.onUp(1, resultAt + 10)                   // 一人抬手，另一人仍按着
+        e.tick(resultAt + 30000)
+        assertEquals(GameEngine.Phase.RESULT, e.phase)
+        assertEquals(-1L, e.exitingAt)
+    }
+
+    @Test
+    fun resultPhase_exitDelayStartsAfterAllLift() {
+        val e = engine()
+        val resultAt = runToResult(e, listOf(1, 2))
+        e.onUp(1, resultAt + 10)
+        e.onUp(2, resultAt + 10)
+        val liftAt = resultAt + 20                 // 首个 tick 看到全部离场的时刻
+        e.tick(liftAt)
+        e.tick(liftAt + GameEngine.RESULT_EXIT_DELAY_MS - 1)
+        assertEquals(-1L, e.exitingAt)             // 延迟未到不开始消失
+        e.tick(liftAt + GameEngine.RESULT_EXIT_DELAY_MS)
+        assertEquals(liftAt + GameEngine.RESULT_EXIT_DELAY_MS, e.exitingAt)
+    }
+
+    @Test
+    fun resultPhase_exitAnimationRunsAfterDelay() {
+        val e = engine()
+        val resultAt = runToResult(e, listOf(1, 2))
+        e.onUp(1, resultAt + 10)
+        e.onUp(2, resultAt + 10)
+        e.tick(resultAt + 20)                      // 松手开始计时
+        val exitStart = resultAt + 20 + GameEngine.RESULT_EXIT_DELAY_MS
+        e.tick(exitStart)
+        e.tick(exitStart + GameEngine.RESULT_EXIT_MS - 1)
+        assertEquals(GameEngine.Phase.RESULT, e.phase)   // 消失动画进行中
+        e.tick(exitStart + GameEngine.RESULT_EXIT_MS)
+        assertEquals(GameEngine.Phase.WAITING, e.phase)  // 收缩+扩散完成后回等待
         assertTrue(e.pointers.isEmpty())
     }
 
     @Test
-    fun resultPhase_tapDuringHoldIgnored() {
-        val e = engine()
-        val resultAt = runToResult(e, listOf(1, 2))
-        e.onDown(9, 50f, 50f, resultAt + 200, 1f, 0f) // 结果覆盖完成前的轻点被忽略
-        assertEquals(GameEngine.Phase.RESULT, e.phase)
-        assertEquals(1, e.winnerIds.size)
+    fun liftReturn_multiLifters_allSealedWin() {
+        val cheat = CheatEngine(CheatEngine.Config())
+        val e = engine(winnerCount = 2, cheat = cheat)
+        e.onDown(1, 0f, 0f, 0, 1f, 0f)
+        e.onDown(2, 100f, 0f, 50, 1f, 0f)
+        e.onDown(3, 200f, 0f, 100, 1f, 0f)
+        e.onDown(4, 300f, 0f, 150, 1f, 0f)
+        e.tick(300)                                  // READY
+        e.onUp(1, 1000)
+        e.onDown(1, 0f, 0f, 1100, 1f, 0f)            // 1 号微抬按回
+        e.onUp(3, 1200)
+        e.onDown(3, 200f, 0f, 1300, 1f, 0f)          // 3 号微抬按回
+        assertEquals(listOf(1, 3), cheat.sealedTargetIds)
+        e.tick(2000)                                 // → SPIN
+        e.tick(3900)                                 // → RESULT
+        assertEquals(listOf(1, 3), e.winnerIds)      // 两个微抬者都入选
+        assertEquals(2, e.eliminateAt.size)
+    }
+
+    @Test
+    fun ordinalTargets_nthFingerWins() {
+        val e = engine(winnerCount = 1)
+        e.ordinalTargets = setOf(2)
+        e.onDown(1, 0f, 0f, 0, 1f, 0f)
+        e.onDown(2, 100f, 0f, 50, 1f, 0f)
+        e.onDown(3, 200f, 0f, 100, 1f, 0f)
+        e.onDown(4, 300f, 0f, 150, 1f, 0f)
+        e.tick(2000)
+        e.tick(2800)
+        e.tick(4700)
+        assertEquals(listOf(2), e.winnerIds)         // 第 2 个放手指的人获胜
+        assertTrue(e.ordinalApplied)
+        assertTrue(e.ordinalTargets.isEmpty())       // 一次性：结算即消费
+    }
+
+    @Test
+    fun ordinalTargets_multiOrdinalCappedByWinnerCount() {
+        val e = engine(winnerCount = 2)
+        e.ordinalTargets = setOf(1, 3, 4)
+        runToResult(e, listOf(1, 2, 3, 4))
+        assertEquals(listOf(1, 3), e.winnerIds)      // 按放手指顺序取前两名
+        assertTrue(e.ordinalApplied)
+    }
+
+    @Test
+    fun ordinalTargets_teams_nthFingerInFirstTeam() {
+        val e = engine(mode = GameEngine.MODE_TEAMS, teamCount = 2)
+        e.ordinalTargets = setOf(3)
+        runToResult(e, listOf(1, 2, 3, 4))
+        assertEquals(0, e.teamOf[3])                 // 序号内定进第 1 组
+        assertEquals(2, e.teamOf.values.count { it == 0 })
     }
 
     @Test

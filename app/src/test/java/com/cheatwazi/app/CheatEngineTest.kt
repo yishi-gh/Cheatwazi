@@ -188,6 +188,48 @@ class CheatEngineTest {
         assertFalse(e.fired)
     }
 
+    @Test
+    fun liftReturn_multiplePointers_eachSeals() {
+        val e = CheatEngine(cfg())
+        val a = pointer(1)
+        val b = pointer(2)
+        a.liftTime = 1000L
+        e.onLiftReturn(a, 1100L)
+        b.liftTime = 1200L
+        e.onLiftReturn(b, 1300L)                // 第二个微抬者同样封印
+        assertTrue(e.fired)
+        assertEquals(listOf(1, 2), e.sealedTargetIds)
+        assertEquals(1, e.sealedTargetId)       // 首个内定目标与通道保持不变
+        assertEquals(CheatEngine.CHANNEL_LIFT, e.sealedChannel)
+    }
+
+    @Test
+    fun liftReturn_samePointerTwice_singleSeal() {
+        val e = CheatEngine(cfg())
+        val p = pointer(1)
+        p.liftTime = 1000L
+        e.onLiftReturn(p, 1100L)
+        p.liftTime = 2000L
+        e.onLiftReturn(p, 2100L)
+        assertEquals(listOf(1), e.sealedTargetIds)
+    }
+
+    @Test
+    fun pressureSealed_thenLiftReturn_appendsTarget() {
+        val e = CheatEngine(cfg())
+        val a = pointer(1)
+        calibrate(a, 1.0f, 0f)
+        a.pressure = 1.4f
+        assertEquals(-1, e.evaluate(listOf(a), 500, null))  // 记录超阈起点
+        assertEquals(1, e.evaluate(listOf(a), 801, null))
+        val b = pointer(2)
+        b.liftTime = 1000L
+        e.onLiftReturn(b, 1100L)                // 压力已锁定后微抬仍可追加目标
+        assertEquals(listOf(1, 2), e.sealedTargetIds)
+        // 压力/姿态通道在已有封印后不再评估
+        assertEquals(-1, e.evaluate(listOf(a), 5000, null))
+    }
+
     // —— 总开关 ——
     @Test
     fun disabled_engineNeverFires() {

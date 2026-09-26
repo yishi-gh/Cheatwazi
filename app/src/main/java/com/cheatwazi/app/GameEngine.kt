@@ -33,12 +33,13 @@ class GameEngine(
         const val MODE_WINNERS = 0
         const val MODE_TEAMS = 1
         const val MIN_POINTERS = 2
+        const val MAX_WINNERS = 8            // 赢家数量上限
         const val STABLE_MS = 800L          // 触点集合稳定此时长后开始读条
-        const val SPIN_MS = 1600L           // 读条时长，读满出结果
+        const val SPIN_MS = 1900L           // 读条时长：前段浅色弧退回 300ms + 重新扫入一圈 1600ms
         const val LIFT_REJOIN_MS = 350L     // 抬起后等待按回的时长，超时视为离场
-        const val ELIMINATE_INTERVAL_MS = 350L
-        const val RESULT_HOLD_MS = 800L     // 结果覆盖后至少停留此时长，期间轻点无效
-        const val SPREAD_MS = 600L          // 单赢家颜色扩散覆盖屏幕的时长
+        const val LOSER_DIE_DELAY_MS = 1200L // 结果公布后输家保持此时长再同时缩小消失（对齐原版）
+        const val RESULT_EXIT_DELAY_MS = 1200L // 全部松手后延迟此时长才开始消失动画（须大于 UI 合拢时长 300ms，避免半途跳变）
+        const val RESULT_EXIT_MS = 600L     // 消失动画：赢家圆收缩 300ms + 黑色扩散 300ms
     }
 
     /** 结果揭晓瞬间的触点快照：RESULT 画面完全由快照驱动，与手指是否仍在屏无关 */
@@ -66,6 +67,17 @@ class GameEngine(
     @Volatile
     var latestGravity: FloatArray? = null
 
+    /** 序号内定（一次性）：本轮放手指的第 N 个（1 起）内定获胜；
+     *  结算时消费一次后自动清空，UI 层据此同步清除持久化设置 */
+    var ordinalTargets: Set<Int> = emptySet()
+    var ordinalApplied: Boolean = false
+        private set
+
+    /** UI 层在序号内定已同步清除持久化设置后调用 */
+    fun clearOrdinalApplied() {
+        ordinalApplied = false
+    }
+
     // —— RESULT 数据 ——
     /** 选赢家模式：入选赢家，按淘汰剩余顺序 */
     var winnerIds: List<Int> = emptyList()
@@ -78,6 +90,11 @@ class GameEngine(
         private set
     var resultAt = 0L
         private set
+    /** 退出动画起始时刻，-1 表示尚未开始退出；期间轻点不响应（对齐原版） */
+    var exitingAt = -1L
+        private set
+    /** 全部手指离开屏幕的时刻，-1 表示仍有人按着 */
+    private var allLiftAt = -1L
     /** 揭晓瞬间的触点快照，RESULT 绘制专用 */
     var resultSpots: List<ResultSpot> = emptyList()
         private set
@@ -89,8 +106,7 @@ class GameEngine(
 
     fun onDown(id: Int, x: Float, y: Float, time: Long, pressure: Float, major: Float) {
         if (phase == Phase.RESULT) {
-            // 结果覆盖完成后轻点任意处重置；覆盖期间忽略
-            if (time - resultAt >= RESULT_HOLD_MS) reset()
+            // 对齐原版：结果期间新触点不响应，也不重置
             return
         }
         val p = tryRevive(id, x, y, time, pressure, major)
@@ -132,14 +148,25 @@ class GameEngine(
         teamOf = emptyMap()
         eliminateAt = emptyMap()
         resultSpots = emptyList()
+        exitingAt = -1L
+        allLiftAt = -1L
         cheat.reset()
     }
 
     /** 每帧驱动：清理离场触点、推进状态转换、评估作弊信号 */
     fun tick(now: Long) {
         if (phase == Phase.RESULT) {
-            // 结果画面常驻（轻点重置），只清理等待回归的超时触点
-            pointers.removeAll { !it.isDown && now - it.liftTime > LIFT_REJOIN_MS }
+            if (exitingAt < 0) {
+                // 只有全部松手才触发消失，且松手后延迟一段再播（不松手一直保持结果画面）
+                if (downCount == 0) {
+                    if (allLiftAt < 0) allLiftAt = now
+                    if (now - allLiftAt >= RESULT_EXIT_DELAY_MS) exitingAt = now
+                }
+                pointers.removeAll { !it.isDown && now - it.liftTime > LIFT_REJOIN_MS }
+            } else if (now - exitingAt >= RESULT_EXIT_MS) {
+                reset()
+                return
+            }
             return
         }
 
@@ -189,6 +216,9 @@ class GameEngine(
         if (phase != Phase.SPIN) 0f
         else ((now - spinStart).toFloat() / SPIN_MS).coerceIn(0f, 1f)
 
+    /** 当前读条轮次的起始时刻，UI 层用它对齐读条弧的退回/扫入动画 */
+    val spinStartAt: Long get() = spinStart
+
     private fun toWaiting() {
         if (phase != Phase.WAITING) {
             phase = Phase.WAITING
@@ -232,27 +262,35 @@ class GameEngine(
     private fun settle(down: List<Pointer>, now: Long) {
         resultAt = now
         val ids = down.map { it.id }
-        val sealed = if (cheat.fired && cheat.sealedTargetId in ids) cheat.sealedTargetId else -1
+        // 内定目标：序号内定（按放手指的先后次序）+ 通道封印（压力/倾斜/微抬），
+        // 顺序即优先级，赢家名额不足时取靠前者
+        val ordinalRigged = if (ordinalTargets.isNotEmpty()) {
+            pointers.asSequence()
+                .mapIndexed { i, p -> (i + 1) to p }   // pointers 即本轮按下创建顺序
+                .filter { (n, p) -> n in ordinalTargets && p.isDown && p.id in ids }
+                .map { it.second.id }
+                .toList()
+        } else emptyList()
+        ordinalApplied = ordinalTargets.isNotEmpty()
+        ordinalTargets = emptySet()                    // 一次性：结算即消费
+        val rigged = (ordinalRigged + cheat.sealedTargetIds.filter { it in ids }).distinct()
 
         if (cfg.mode == MODE_WINNERS) {
-            val winners = ArrayList<Int>()
-            if (sealed >= 0) winners.add(sealed)
-            val pool = ids.filter { it != sealed }.toMutableList()
+            val k = cfg.winnerCount.coerceIn(1, minOf(ids.size, MAX_WINNERS))
+            val winners = rigged.take(k).toMutableList()
+            val pool = ids.filter { it !in winners }.toMutableList()
             pool.shuffle(random)
-            val k = cfg.winnerCount.coerceIn(1, ids.size)
             while (winners.size < k && pool.isNotEmpty()) winners.add(pool.removeAt(0))
             winnerIds = winners
-            val losers = pool
-                .filter { it !in winners }
-                .shuffled(random)
-                .mapIndexed { i, id -> id to (i + 1) * ELIMINATE_INTERVAL_MS }
-            eliminateAt = losers.toMap()
+            // 对齐原版：输家在结果公布后保持 1.2s 再同时缩小消失
+            eliminateAt = ids.filter { it !in winners }.associateWith { LOSER_DIE_DELAY_MS }
         } else {
             // 分队：内定目标固定进第 1 组，其余随机均匀分
             val ordered = ids.toMutableList()
-            if (sealed >= 0) {
-                ordered.remove(sealed)
-                ordered.add(0, sealed)
+            if (rigged.isNotEmpty()) {
+                ordered.removeAll(rigged)
+                ordered.shuffle(random)
+                ordered.addAll(0, rigged)
             } else {
                 ordered.shuffle(random)
             }

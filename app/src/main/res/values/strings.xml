@@ -2,20 +2,19 @@
 <resources>
     <string name="app_name">Cheatwazi</string>
 
-    <!-- 主界面状态提示 -->
-    <string name="hint_winner">就是你了！</string>
-    <string name="hint_team">分队完成</string>
-
     <!-- 设置页 -->
     <string name="settings_title">Cheatwazi 设置</string>
     <string name="game_section">游戏</string>
     <string name="mode_label">游戏模式</string>
     <string name="mode_winners">选出赢家</string>
     <string name="mode_teams">随机分队</string>
+    <string name="mode_hint_winners">内定的人必进赢家名单；多名内定按触发顺序占用赢家名额</string>
+    <string name="mode_hint_teams">内定的人固定分进第 1 组（绿色那组），其余人随机均分</string>
     <string name="winner_count_label">赢家数量：%d</string>
     <string name="team_count_label">队伍数量：%d</string>
     <string name="haptics_label">震动反馈</string>
     <string name="sound_label">音效</string>
+    <string name="feedback_section">反馈</string>
 
     <string name="cheat_section">作弊引擎</string>
     <string name="cheat_enabled_label">启用作弊</string>
@@ -27,6 +26,9 @@
     <string name="sens_1">标准</string>
     <string name="sens_2">灵敏</string>
 
+    <string name="ordinal_section">序号内定（一次性）</string>
+    <string name="ordinal_hint">勾选后，下一局第 N 个放手指的人内定获胜，该局结束自动失效</string>
+
     <string name="selftest_label">设备自检</string>
     <string name="selftest_hint">按住下方区域查看压力 / 接触面积读数</string>
     <string name="selftest_pressure_ok">压力通道：可用</string>
@@ -36,5 +38,7 @@
     <string name="selftest_readout">压力 %.3f　面积 %.3f　倾斜 %.1f°</string>
 
     <string name="howto_title">使用说明</string>
-    <string name="howto_body">所有手势都在读条期间生效（人齐后的约 2.4 秒窗口），动作保持自然：\n\n1. 让自己赢 —— 稍微用力按住屏幕不放，或手指快速抬起立即按回（半秒内）。\n\n2. 指定别人赢 —— 把手机朝他那侧轻轻压低并保持半秒，倾斜的下坡方向指向谁，谁就赢。\n\n3. 分队模式同样有效 —— 被指定的人会被分进第 1 组（黄色、数字 1 的那组），其余人随机均分。\n\n4. 进入设置 —— 在等待界面用手指画一个小三角形（接近闭合即可）。\n\n灵敏度越低越难被察觉，但也越难触发；建议先用上方自检区确认本机压力通道是否可用。无信号时行为与正常随机完全一致。</string>
+    <string name="howto_body">快速上手：\n\n· 进设置 —— 等待界面画个小三角\n· 模式与人数 —— 主界面顶栏 FINGERS / GROUPS 直接切换\n\n内定手势（读条的约 3 秒内做，动作保持自然）：\n\n· 自己赢 —— 按住屏幕别放，或手指快速抬起再按回\n· 指定别人 —— 手机朝他那侧压低半秒\n· 序号内定 —— 下方勾选后，下一局第 N 个放手指的人赢，用一次自动失效\n\n内定在两种模式下都有效：选赢家必进名单，分队固定进第 1 组。建议先用自检区确认压力通道是否可用；无信号时与真随机无差别。</string>
+
+    <string name="copyright_note">本项目仅供学习交流使用 · 原版 Chwazi 为 Tenda Digital 的作品</string>
 </resources>

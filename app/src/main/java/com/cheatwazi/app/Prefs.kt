@@ -21,7 +21,26 @@ object Prefs {
         val tiltOn: Boolean = true,
         val liftOn: Boolean = true,
         val sensitivity: Int = 1,
+        /** 序号内定（一次性）：下一局第 N 个放手指的人获胜，用后清除 */
+        val ordinalTargets: Set<Int> = emptySet(),
     )
+
+    /** 读取序号内定设置 */
+    fun ordinalTargets(ctx: Context): Set<Int> =
+        ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+            .getString("ordinalTargets", "")
+            ?.split(',')
+            ?.mapNotNull { it.trim().toIntOrNull() }
+            ?.filter { it in 1..GameEngine.MAX_WINNERS }
+            ?.toSet()
+            ?: emptySet()
+
+    /** 写入/清除（传空集合清除）序号内定设置 */
+    fun setOrdinalTargets(ctx: Context, targets: Set<Int>) {
+        ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
+            .putString("ordinalTargets", targets.sorted().joinToString(","))
+            .apply()
+    }
 
     fun load(ctx: Context): Snapshot {
         val p = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -36,6 +55,7 @@ object Prefs {
             tiltOn = p.getBoolean("tiltOn", true),
             liftOn = p.getBoolean("liftOn", true),
             sensitivity = p.getInt("sensitivity", 1),
+            ordinalTargets = ordinalTargets(ctx),
         )
     }
 
@@ -65,6 +85,7 @@ object Prefs {
             .putBoolean("tiltOn", s.tiltOn)
             .putBoolean("liftOn", s.liftOn)
             .putInt("sensitivity", s.sensitivity)
+            .putString("ordinalTargets", s.ordinalTargets.sorted().joinToString(","))
             .apply()
     }
 }

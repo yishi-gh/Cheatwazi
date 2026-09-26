@@ -48,10 +48,12 @@ class CheatEngine(val cfg: Config) {
         const val CHANNEL_LIFT = 2
     }
 
-    /** 内定赢家 pointer id，-1 表示尚无信号 */
+    /** 内定赢家 pointer id 列表（按触发顺序）；微抬通道允许多人各自触发 */
+    val sealedTargetIds = ArrayList<Int>()
+    /** 首个内定赢家 pointer id，-1 表示尚无信号 */
     var sealedTargetId = -1
         private set
-    /** 触发通道，-1 无 */
+    /** 首个触发通道，-1 无 */
     var sealedChannel = -1
         private set
 
@@ -59,10 +61,11 @@ class CheatEngine(val cfg: Config) {
     private var gravityRef: FloatArray? = null
     private var tiltStart = -1L
 
-    val fired: Boolean get() = sealedTargetId >= 0
+    val fired: Boolean get() = sealedTargetIds.isNotEmpty()
 
     /** 新一轮游戏开始时清空全部状态 */
     fun reset() {
+        sealedTargetIds.clear()
         sealedTargetId = -1
         sealedChannel = -1
         gravityRef = null
@@ -84,10 +87,13 @@ class CheatEngine(val cfg: Config) {
         tiltStart = -1L
     }
 
-    /** GameEngine 检测到"抬起-按回"成立时回调；调用方须在清除 p.liftTime 之前调用 */
+    /** GameEngine 检测到"抬起-按回"成立时回调；调用方须在清除 p.liftTime 之前调用。
+     *  微抬通道支持多目标：每个按回的触点各自封印（赢家名额在结算时裁剪） */
     fun onLiftReturn(p: Pointer, now: Long) {
-        if (!cfg.enabled || !cfg.liftOn || fired) return
-        if (now - p.liftTime <= cfg.liftWindowMs + 60L) seal(p.id, CHANNEL_LIFT)
+        if (!cfg.enabled || !cfg.liftOn) return
+        if (now - p.liftTime <= cfg.liftWindowMs + 60L && p.id !in sealedTargetIds) {
+            seal(p.id, CHANNEL_LIFT)
+        }
     }
 
     /**
@@ -177,7 +183,11 @@ class CheatEngine(val cfg: Config) {
     }
 
     private fun seal(id: Int, channel: Int) {
-        sealedTargetId = id
-        sealedChannel = channel
+        if (sealedTargetIds.contains(id)) return
+        sealedTargetIds.add(id)
+        if (sealedTargetIds.size == 1) {
+            sealedTargetId = id
+            sealedChannel = channel
+        }
     }
 }

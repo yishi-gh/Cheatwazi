@@ -6,3 +6,6 @@ local.properties
 build/
 captures/
 .cxx/
+
+# 参照用的原版安装包，禁止入库（版权物）
+Chwazi.apk*

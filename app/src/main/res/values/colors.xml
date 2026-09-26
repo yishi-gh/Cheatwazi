@@ -1,26 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#060606</color>
+    <color name="bg">#050505</color>
     <color name="hint_text">#8AFFFFFF</color>
 
-    <!-- 触点 10 色循环 -->
-    <color name="p0">#FFD60A</color>
-    <color name="p1">#FF2D95</color>
-    <color name="p2">#00E5FF</color>
-    <color name="p3">#76FF03</color>
-    <color name="p4">#B388FF</color>
-    <color name="p5">#FF9500</color>
-    <color name="p6">#4D8DFF</color>
-    <color name="p7">#FF3B30</color>
-    <color name="p8">#2CE8A4</color>
-    <color name="p9">#FF6EA0</color>
+    <!-- 触点 10 色，每色三档：主体（色盘）/ 描边（外环）/ 浅色（读条弧），对齐原版配色 -->
+    <color name="p0">#8EC43C</color>
+    <color name="p0r">#638F20</color>
+    <color name="p0c">#99FF00</color>
+    <color name="p1">#EE3A44</color>
+    <color name="p1r">#D0003E</color>
+    <color name="p1c">#E76868</color>
+    <color name="p2">#0491B3</color>
+    <color name="p2r">#247386</color>
+    <color name="p2c">#64C3D9</color>
+    <color name="p3">#FF7F00</color>
+    <color name="p3r">#BF7730</color>
+    <color name="p3c">#FFB873</color>
+    <color name="p4">#E73AAF</color>
+    <color name="p4r">#D0008C</color>
+    <color name="p4c">#E768BE</color>
+    <color name="p5">#FFE259</color>
+    <color name="p5r">#EDC900</color>
+    <color name="p5c">#FFECA1</color>
+    <color name="p6">#E6E6E6</color>
+    <color name="p6r">#B3B3B3</color>
+    <color name="p6c">#FFFFFF</color>
+    <color name="p7">#9C4DCC</color>
+    <color name="p7r">#7534A0</color>
+    <color name="p7c">#C482E9</color>
+    <color name="p8">#00BFA5</color>
+    <color name="p8r">#008C78</color>
+    <color name="p8c">#4DDCC4</color>
+    <color name="p9">#B57949</color>
+    <color name="p9r">#8C5830</color>
+    <color name="p9c">#D6A478</color>
 
-    <!-- 分队 5 色 -->
-    <color name="t0">#FFD60A</color>
-    <color name="t1">#00E5FF</color>
-    <color name="t2">#FF2D95</color>
-    <color name="t3">#76FF03</color>
-    <color name="t4">#B388FF</color>
-
-    <color name="winner_ring">#FFFFFF</color>
+    <!-- 分队 5 色（无白的五色，组内统一重着色） -->
+    <color name="t0">#8EC43C</color>
+    <color name="t0r">#638F20</color>
+    <color name="t0c">#99FF00</color>
+    <color name="t1">#EE3A44</color>
+    <color name="t1r">#D0003E</color>
+    <color name="t1c">#E76868</color>
+    <color name="t2">#0491B3</color>
+    <color name="t2r">#247386</color>
+    <color name="t2c">#64C3D9</color>
+    <color name="t3">#FF7F00</color>
+    <color name="t3r">#BF7730</color>
+    <color name="t3c">#FFB873</color>
+    <color name="t4">#E73AAF</color>
+    <color name="t4r">#D0008C</color>
+    <color name="t4c">#E768BE</color>
 </resources>

@@ -2,8 +2,10 @@ package com.cheatwazi.app
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -21,6 +23,7 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.ToggleButton
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatRadioButton
@@ -35,6 +38,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var rgMode: RadioGroup
     private lateinit var rbWinners: AppCompatRadioButton
     private lateinit var rbTeams: AppCompatRadioButton
+    private lateinit var tvModeHint: TextView
     private lateinit var winnerCountContainer: LinearLayout
     private lateinit var tvWinnerCountLabel: TextView
     private lateinit var sbWinnerCount: SeekBar
@@ -57,6 +61,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var tvSensitivityLabel: TextView
     private lateinit var sbSensitivity: SeekBar
     private lateinit var tvThresholds: TextView
+    private val ordinalChips = ArrayList<ToggleButton>()
 
     /** 压力通道硬件支持：0 未检测 1 可用 2 不可用（自检采样写入并持久化） */
     private var pressureSupport = Prefs.PRESSURE_UNKNOWN
@@ -181,7 +186,7 @@ class SettingsActivity : AppCompatActivity() {
             }
             setText(R.string.settings_title)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-            setTextColor(ContextCompat.getColor(context, R.color.winner_ring))
+            setTextColor(ContextCompat.getColor(context, R.color.p2))
             typeface = Typeface.DEFAULT_BOLD
         }
         rootLayout.addView(tvTitle)
@@ -217,6 +222,19 @@ class SettingsActivity : AppCompatActivity() {
         rgMode.addView(rbTeams)
         rootLayout.addView(rgMode)
 
+        // 模式说明（随模式联动）：就地说明该模式下内定的实际效果
+        tvModeHint = TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(10)
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
+        }
+        rootLayout.addView(tvModeHint)
+
         // 赢家数量 (1..10)
         winnerCountContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -232,7 +250,7 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(0xFFFFFFFF.toInt())
         }
         sbWinnerCount = SeekBar(this).apply {
-            max = 9 // 0..9 -> 1..10
+            max = 7 // 0..7 -> 1..8（赢家数量上限 8）
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -270,14 +288,6 @@ class SettingsActivity : AppCompatActivity() {
         teamCountContainer.addView(tvTeamCountLabel)
         teamCountContainer.addView(sbTeamCount)
         rootLayout.addView(teamCountContainer)
-
-        // 震动反馈 Switch
-        swHaptics = SwitchCompat(this)
-        rootLayout.addView(createChannelRow(getString(R.string.haptics_label), null, swHaptics))
-
-        // 音效 Switch
-        swSound = SwitchCompat(this)
-        rootLayout.addView(createChannelRow(getString(R.string.sound_label), null, swSound))
 
         // 分隔线
         rootLayout.addView(createDivider())
@@ -478,6 +488,83 @@ class SettingsActivity : AppCompatActivity() {
 
         rootLayout.addView(cheatChannelsContainer)
 
+        // —— 「序号内定（一次性）」独立节：勾选后下一局第 N 个放手指的人获胜，用后自动清空 ——
+        rootLayout.addView(createDivider())
+        rootLayout.addView(createSectionTitle(R.string.ordinal_section))
+
+        val ordinalHint = TextView(this).apply {
+            setText(R.string.ordinal_hint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        rootLayout.addView(ordinalHint)
+
+        var chipIndex = 0
+        for (row in 0 until 2) {
+            val chipRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(4) }
+            }
+            repeat(4) {
+                val n = ++chipIndex
+                val chip = ToggleButton(this).apply {
+                    textOn = n.toString()
+                    textOff = n.toString()
+                    text = n.toString()
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        marginEnd = if (n % 4 == 0) 0 else dp(8)
+                    }
+                    // 选中态：青色实底 + 白字；未选中：暗底 + 灰字，一眼可辨
+                    background = StateListDrawable().apply {
+                        addState(
+                            intArrayOf(android.R.attr.state_checked),
+                            GradientDrawable().apply {
+                                setColor(0xFF0491B3.toInt())
+                                cornerRadius = dp(10).toFloat()
+                            }
+                        )
+                        addState(
+                            IntArray(0),
+                            GradientDrawable().apply {
+                                setColor(0x1FFFFFFF)
+                                cornerRadius = dp(10).toFloat()
+                            }
+                        )
+                    }
+                    setTextColor(
+                        ColorStateList(
+                            arrayOf(
+                                intArrayOf(android.R.attr.state_checked),
+                                IntArray(0)
+                            ),
+                            intArrayOf(0xFFFFFFFF.toInt(), 0xFF9AA6A6.toInt())
+                        )
+                    )
+                }
+                chip.setOnCheckedChangeListener { _, _ ->
+                    if (isInitialized) saveCurrentPrefs()
+                }
+                ordinalChips.add(chip)
+                chipRow.addView(chip)
+            }
+            rootLayout.addView(chipRow)
+        }
+
+        // —— 「反馈」节：与游戏逻辑无关的通用开关 ——
+        rootLayout.addView(createDivider())
+        rootLayout.addView(createSectionTitle(R.string.feedback_section))
+        swHaptics = SwitchCompat(this)
+        rootLayout.addView(createChannelRow(getString(R.string.haptics_label), null, swHaptics))
+        swSound = SwitchCompat(this)
+        rootLayout.addView(createChannelRow(getString(R.string.sound_label), null, swSound))
+
         // 分隔线
         rootLayout.addView(createDivider())
 
@@ -492,7 +579,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         rootLayout.addView(tvHowto)
 
-        // 项目 GitHub 地址（点击打开浏览器）
+        // 项目 GitHub 地址（GitHub 图标 + 链接，点击打开浏览器）
         val tvGithub = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -500,9 +587,12 @@ class SettingsActivity : AppCompatActivity() {
             ).apply {
                 topMargin = dp(16)
             }
-            text = "GitHub：github.com/yishi-gh/Cheatwazi"
+            text = "github.com/yishi-gh/Cheatwazi"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(0xFF4D8DFF.toInt())
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_github, 0, 0, 0)
+            compoundDrawablePadding = dp(8)
+            gravity = Gravity.CENTER_VERTICAL
         }
         tvGithub.setOnClickListener {
             runCatching {
@@ -512,6 +602,20 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         rootLayout.addView(tvGithub)
+
+        // 对原版的尊重声明
+        val tvCopyright = TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(10)
+            }
+            setText(R.string.copyright_note)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
+        }
+        rootLayout.addView(tvCopyright)
 
         setContentView(scrollView)
     }
@@ -563,11 +667,15 @@ class SettingsActivity : AppCompatActivity() {
         }
         updateModeVisibility(s.mode)
 
-        sbWinnerCount.progress = (s.winnerCount - 1).coerceIn(0, 9)
+        sbWinnerCount.progress = (s.winnerCount - 1).coerceIn(0, 7)
         tvWinnerCountLabel.text = getString(R.string.winner_count_label, s.winnerCount)
 
         sbTeamCount.progress = (s.teamCount - 2).coerceIn(0, 3)
         tvTeamCountLabel.text = getString(R.string.team_count_label, s.teamCount)
+
+        ordinalChips.forEachIndexed { i, chip ->
+            chip.isChecked = (i + 1) in s.ordinalTargets
+        }
 
         swHaptics.isChecked = s.hapticsOn
         swSound.isChecked = s.soundOn
@@ -660,6 +768,10 @@ class SettingsActivity : AppCompatActivity() {
             tiltOn = swTilt.isChecked,
             liftOn = swLift.isChecked,
             sensitivity = sbSensitivity.progress,
+            ordinalTargets = ordinalChips
+                .mapIndexed { i, chip -> if (chip.isChecked) i + 1 else null }
+                .filterNotNull()
+                .toSet(),
         )
         Prefs.save(this, snapshot)
     }
@@ -706,7 +818,7 @@ class SettingsActivity : AppCompatActivity() {
         val ready = pressureSupport != Prefs.PRESSURE_UNKNOWN
         swCheatEnabled.isEnabled = ready
         if (!ready) swCheatEnabled.isChecked = false
-        tvCheatSub.text = if (ready) "三条通道按自检结果自动限用"
+        tvCheatSub.text = if (ready) "开启后，下方三条通道与序号内定才可用"
         else "请先完成上方设备自检"
         tvCheatSub.setTextColor(
             if (ready) ContextCompat.getColor(this, R.color.hint_text) else 0xFFFF5252.toInt()
@@ -729,15 +841,22 @@ class SettingsActivity : AppCompatActivity() {
         if (mode == GameEngine.MODE_WINNERS) {
             winnerCountContainer.visibility = View.VISIBLE
             teamCountContainer.visibility = View.GONE
+            tvModeHint.text = getString(R.string.mode_hint_winners)
         } else {
             winnerCountContainer.visibility = View.GONE
             teamCountContainer.visibility = View.VISIBLE
+            tvModeHint.text = getString(R.string.mode_hint_teams)
         }
     }
 
     private fun updateCheatSectionState(enabled: Boolean) {
         cheatChannelsContainer.alpha = if (enabled) 1.0f else 0.4f
         setViewGroupEnabled(cheatChannelsContainer, enabled)
+        // 序号内定已独立成节，同样跟随总开关的可用态
+        ordinalChips.forEach { chip ->
+            chip.isEnabled = enabled
+            chip.alpha = if (enabled) 1.0f else 0.4f
+        }
         // 总开关打开时，仍要保持硬件不可用通道的禁用态
         if (enabled) applyChannelAvailability()
     }
