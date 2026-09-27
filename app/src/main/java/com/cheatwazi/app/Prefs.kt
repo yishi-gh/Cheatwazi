@@ -16,10 +16,8 @@ object Prefs {
         val teamCount: Int = 2,
         val soundOn: Boolean = true,
         val hapticsOn: Boolean = true,
-        val cheatEnabled: Boolean = true,
-        val pressureOn: Boolean = true,
-        val tiltOn: Boolean = true,
-        val liftOn: Boolean = true,
+        /** 作弊通道：-1 关闭 / 0 压力 / 1 倾斜 / 2 微抬 / 3 序号（单通道互斥） */
+        val cheatChannel: Int = CheatEngine.CHANNEL_LIFT,
         val sensitivity: Int = 1,
         /** 序号内定（一次性）：下一局第 N 个放手指的人获胜，用后清除 */
         val ordinalTargets: Set<Int> = emptySet(),
@@ -42,23 +40,6 @@ object Prefs {
             .apply()
     }
 
-    fun load(ctx: Context): Snapshot {
-        val p = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
-        return Snapshot(
-            mode = p.getInt("mode", GameEngine.MODE_WINNERS),
-            winnerCount = p.getInt("winnerCount", 1),
-            teamCount = p.getInt("teamCount", 2),
-            soundOn = p.getBoolean("soundOn", true),
-            hapticsOn = p.getBoolean("hapticsOn", true),
-            cheatEnabled = p.getBoolean("cheatEnabled", true),
-            pressureOn = p.getBoolean("pressureOn", true),
-            tiltOn = p.getBoolean("tiltOn", true),
-            liftOn = p.getBoolean("liftOn", true),
-            sensitivity = p.getInt("sensitivity", 1),
-            ordinalTargets = ordinalTargets(ctx),
-        )
-    }
-
     /** 压力通道硬件支持检测结果（自检采样写入） */
     const val PRESSURE_UNKNOWN = 0
     const val PRESSURE_OK = 1
@@ -73,6 +54,27 @@ object Prefs {
             .apply()
     }
 
+    fun load(ctx: Context): Snapshot {
+        val p = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return Snapshot(
+            mode = p.getInt("mode", GameEngine.MODE_WINNERS),
+            winnerCount = p.getInt("winnerCount", 1),
+            teamCount = p.getInt("teamCount", 2),
+            soundOn = p.getBoolean("soundOn", true),
+            hapticsOn = p.getBoolean("hapticsOn", true),
+            cheatChannel = loadChannel(p),
+            sensitivity = p.getInt("sensitivity", 1),
+            ordinalTargets = ordinalTargets(ctx),
+        )
+    }
+
+    /** 读取通道；旧版本（总开关+三独立开关）配置一次性迁移，之后按新键存取 */
+    private fun loadChannel(p: android.content.SharedPreferences): Int {
+        if (p.contains("cheatChannel")) return p.getInt("cheatChannel", CheatEngine.CHANNEL_LIFT)
+        return if (!p.getBoolean("cheatEnabled", true)) CheatEngine.CHANNEL_OFF
+        else CheatEngine.CHANNEL_LIFT
+    }
+
     fun save(ctx: Context, s: Snapshot) {
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
             .putInt("mode", s.mode)
@@ -80,10 +82,7 @@ object Prefs {
             .putInt("teamCount", s.teamCount)
             .putBoolean("soundOn", s.soundOn)
             .putBoolean("hapticsOn", s.hapticsOn)
-            .putBoolean("cheatEnabled", s.cheatEnabled)
-            .putBoolean("pressureOn", s.pressureOn)
-            .putBoolean("tiltOn", s.tiltOn)
-            .putBoolean("liftOn", s.liftOn)
+            .putInt("cheatChannel", s.cheatChannel)
             .putInt("sensitivity", s.sensitivity)
             .putString("ordinalTargets", s.ordinalTargets.sorted().joinToString(","))
             .apply()

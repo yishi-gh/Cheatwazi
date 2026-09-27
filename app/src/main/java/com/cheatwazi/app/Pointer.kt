@@ -34,6 +34,16 @@ class Pointer(
     /** >= 0 表示已抬起、正在等待按回；-1 表示在屏 */
     var liftTime = -1L
 
+    /** 读条阶段新加入的时刻，-1 表示非读条阶段加入（含按回复活的旧触点）；
+     *  UI 层用它播放"快速转完第一圈"的加入动画 */
+    var joinSpinAt = -1L
+
+    /** 本轮放手指的创建序号（1 起，离场不复用）；序号内定通道据此判定 */
+    var creationOrdinal = 0
+
+    /** 色环/读条弧的随机起始角（度，黄金角散布），起始点不正上方 */
+    val arcStartDeg: Float = (id * 137.508f) % 360f
+
     var colorIndex = 0
 
     val isDown: Boolean get() = liftTime < 0

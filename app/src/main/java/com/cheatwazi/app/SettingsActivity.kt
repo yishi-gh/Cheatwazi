@@ -35,9 +35,9 @@ import kotlin.math.hypot
 class SettingsActivity : AppCompatActivity() {
 
     // —— 游戏节控件 ——
-    private lateinit var rgMode: RadioGroup
-    private lateinit var rbWinners: AppCompatRadioButton
-    private lateinit var rbTeams: AppCompatRadioButton
+    private lateinit var tvModeWinners: TextView
+    private lateinit var tvModeTeams: TextView
+    private var selectedMode: Int = GameEngine.MODE_WINNERS
     private lateinit var tvModeHint: TextView
     private lateinit var winnerCountContainer: LinearLayout
     private lateinit var tvWinnerCountLabel: TextView
@@ -52,12 +52,12 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var swCheatEnabled: SwitchCompat
     private lateinit var tvCheatSub: TextView
     private lateinit var cheatChannelsContainer: LinearLayout
-    private lateinit var swPressure: SwitchCompat
-    private lateinit var tvPressureSub: TextView
-    private lateinit var swTilt: SwitchCompat
-    private lateinit var tvTiltSub: TextView
-    private lateinit var swLift: SwitchCompat
-    private lateinit var tvLiftSub: TextView
+    private lateinit var rgChannel: RadioGroup
+    private lateinit var rbPressure: AppCompatRadioButton
+    private lateinit var rbTilt: AppCompatRadioButton
+    private lateinit var rbLift: AppCompatRadioButton
+    private lateinit var rbOrdinal: AppCompatRadioButton
+    private lateinit var tvChannelSub: TextView
     private lateinit var tvSensitivityLabel: TextView
     private lateinit var sbSensitivity: SeekBar
     private lateinit var tvThresholds: TextView
@@ -163,87 +163,67 @@ class SettingsActivity : AppCompatActivity() {
             ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     }
 
-    // —— 构建页面 UI ——
+    // —— 构建页面 UI（卡片分组 + 青色点缀） ——
     private fun buildUi() {
         val scrollView = ScrollView(this).apply {
             isFillViewport = true
             setBackgroundColor(ContextCompat.getColor(context, R.color.bg))
         }
-
         val rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(36))
+            setPadding(dp(20), dp(28), dp(20), dp(40))
         }
         scrollView.addView(rootLayout)
 
-        // 1. 标题 settings_title（20sp 粗体白）
-        val tvTitle = TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(18)
-            }
-            setText(R.string.settings_title)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        // 头部：小字品牌 + 大标题
+        rootLayout.addView(TextView(this).apply {
+            text = "C H E A T W A Z I"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             setTextColor(ContextCompat.getColor(context, R.color.p2))
             typeface = Typeface.DEFAULT_BOLD
-        }
-        rootLayout.addView(tvTitle)
-
-        // 2. 「游戏」节
-        rootLayout.addView(createSectionTitle(R.string.game_section))
-
-        // 模式单选 RadioGroup
-        rgMode = RadioGroup(this).apply {
-            orientation = RadioGroup.HORIZONTAL
+        })
+        rootLayout.addView(TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(12)
-            }
-        }
-        rbWinners = AppCompatRadioButton(this).apply {
-            id = View.generateViewId()
-            setText(R.string.mode_winners)
+            ).apply { bottomMargin = dp(26) }
+            setText(R.string.settings_title)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
             setTextColor(0xFFFFFFFF.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            layoutParams = RadioGroup.LayoutParams(0, RadioGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        rbTeams = AppCompatRadioButton(this).apply {
-            id = View.generateViewId()
-            setText(R.string.mode_teams)
-            setTextColor(0xFFFFFFFF.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            layoutParams = RadioGroup.LayoutParams(0, RadioGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        rgMode.addView(rbWinners)
-        rgMode.addView(rbTeams)
-        rootLayout.addView(rgMode)
+            typeface = Typeface.DEFAULT_BOLD
+        })
 
-        // 模式说明（随模式联动）：就地说明该模式下内定的实际效果
+        // —— 「游戏」节 ——
+        sectionLabel(rootLayout, R.string.game_section)
+        val gameCard = card()
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(12) }
+        }
+        tvModeWinners = modeSegment(R.string.mode_winners)
+        tvModeTeams = modeSegment(R.string.mode_teams).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f)
+        }
+        modeRow.addView(tvModeWinners)
+        modeRow.addView(tvModeTeams)
+        gameCard.addView(modeRow)
         tvModeHint = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(10)
-            }
+            ).apply { bottomMargin = dp(6) }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(ContextCompat.getColor(context, R.color.hint_text))
         }
-        rootLayout.addView(tvModeHint)
-
-        // 赢家数量 (1..10)
+        gameCard.addView(tvModeHint)
+        cardDivider(gameCard)
+        // 赢家数量 (1..8)
         winnerCountContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(10)
-            }
+            setPadding(0, dp(12), 0, dp(12))
         }
         tvWinnerCountLabel = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -254,23 +234,17 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(4)
-            }
+            ).apply { topMargin = dp(8) }
         }
+        tintSeek(sbWinnerCount)
         winnerCountContainer.addView(tvWinnerCountLabel)
         winnerCountContainer.addView(sbWinnerCount)
-        rootLayout.addView(winnerCountContainer)
-
+        gameCard.addView(winnerCountContainer)
+        cardDivider(gameCard)
         // 队伍数量 (2..5)
         teamCountContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(10)
-            }
+            setPadding(0, dp(12), 0, dp(4))
         }
         tvTeamCountLabel = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -281,48 +255,36 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(4)
-            }
+            ).apply { topMargin = dp(8) }
         }
+        tintSeek(sbTeamCount)
         teamCountContainer.addView(tvTeamCountLabel)
         teamCountContainer.addView(sbTeamCount)
-        rootLayout.addView(teamCountContainer)
+        gameCard.addView(teamCountContainer)
+        rootLayout.addView(gameCard)
 
-        // 分隔线
-        rootLayout.addView(createDivider())
-
-        // 3. 「设备自检」节（前置：未完成检测不能启用作弊）
-        rootLayout.addView(createSectionTitle(R.string.selftest_label))
-
-        // 说明行 selftest_hint
-        val tvSelftestHint = TextView(this).apply {
+        // —— 「设备自检」节 ——
+        sectionLabel(rootLayout, R.string.selftest_label)
+        val selfCard = card()
+        selfCard.addView(TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(10)
-            }
+            ).apply { bottomMargin = dp(12) }
             setText(R.string.selftest_hint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(ContextCompat.getColor(context, R.color.hint_text))
-        }
-        rootLayout.addView(tvSelftestHint)
-
-        // 120dp 高自检触摸区（背景 #14FFFFFF 圆角 12dp）
+        })
         val selftestBox = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(120)
-            ).apply {
-                bottomMargin = dp(10)
-            }
+            ).apply { bottomMargin = dp(12) }
             background = GradientDrawable().apply {
                 setColor(0x14FFFFFF)
-                cornerRadius = dp(12).toFloat()
+                cornerRadius = dp(16).toFloat()
             }
         }
-
         tvReadout = TextView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -335,7 +297,6 @@ class SettingsActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(context, R.color.hint_text))
         }
         selftestBox.addView(tvReadout)
-
         selftestBox.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
@@ -361,17 +322,9 @@ class SettingsActivity : AppCompatActivity() {
                 else -> false
             }
         }
-        rootLayout.addView(selftestBox)
-
-        // 状态说明区（压力通道与姿态通道）
+        selfCard.addView(selftestBox)
         val statusContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(4)
-            }
         }
         tvPressureStatus = TextView(this).apply {
             text = "压力通道：待采样"
@@ -394,31 +347,21 @@ class SettingsActivity : AppCompatActivity() {
         }
         statusContainer.addView(tvPressureStatus)
         statusContainer.addView(tvTiltStatus)
+        selfCard.addView(statusContainer)
+        rootLayout.addView(selfCard)
 
-        // 权限说明：本应用无运行时权限，震动为 normal 级安装即授予
-        val tvPermStatus = TextView(this).apply {
-            text = "所需权限：无（震动为系统安装时自动授予，传感器免权限）"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
-            setPadding(0, dp(2), 0, dp(2))
-        }
-        statusContainer.addView(tvPermStatus)
-        rootLayout.addView(statusContainer)
-
-        // 分隔线
-        rootLayout.addView(createDivider())
-
-        // 4. 「作弊引擎」节
-        rootLayout.addView(createSectionTitle(R.string.cheat_section))
-
-        // 总开关（未完成自检时禁用，副标题联动）
+        // —— 「作弊引擎」节 ——
+        sectionLabel(rootLayout, R.string.cheat_section)
+        val cheatCard = card()
         swCheatEnabled = SwitchCompat(this)
+        tintSwitch(swCheatEnabled)
         tvCheatSub = TextView(this)
-        rootLayout.addView(
+        cheatCard.addView(
             createChannelRow(getString(R.string.cheat_enabled_label), tvCheatSub, swCheatEnabled)
         )
+        cardDivider(cheatCard)
 
-        // 通道区容器
+        // 通道区容器：单通道互斥，四选一
         cheatChannelsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
@@ -426,38 +369,56 @@ class SettingsActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-
-        // 压力通道（副标题由硬件检测结果联动）
-        swPressure = SwitchCompat(this)
-        tvPressureSub = TextView(this)
-        cheatChannelsContainer.addView(
-            createChannelRow(getString(R.string.channel_pressure), tvPressureSub, swPressure)
-        )
-
-        // 姿态通道
-        swTilt = SwitchCompat(this)
-        tvTiltSub = TextView(this)
-        cheatChannelsContainer.addView(
-            createChannelRow(getString(R.string.channel_tilt), tvTiltSub, swTilt)
-        )
-
-        // 微抬通道（纯软件逻辑，恒可用）
-        swLift = SwitchCompat(this)
-        tvLiftSub = TextView(this)
-        cheatChannelsContainer.addView(
-            createChannelRow(getString(R.string.channel_lift), tvLiftSub, swLift)
-        )
+        rgChannel = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        rbPressure = AppCompatRadioButton(this).apply {
+            id = View.generateViewId()
+            setText(R.string.channel_pressure)
+            setTextColor(0xFFFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        }
+        rbTilt = AppCompatRadioButton(this).apply {
+            id = View.generateViewId()
+            setText(R.string.channel_tilt)
+            setTextColor(0xFFFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        }
+        rbLift = AppCompatRadioButton(this).apply {
+            id = View.generateViewId()
+            setText(R.string.channel_lift)
+            setTextColor(0xFFFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        }
+        rbOrdinal = AppCompatRadioButton(this).apply {
+            id = View.generateViewId()
+            setText(R.string.channel_ordinal)
+            setTextColor(0xFFFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        }
+        listOf(rbPressure, rbTilt, rbLift, rbOrdinal).forEach { rb ->
+            tintRadio(rb)
+            rgChannel.addView(rb)
+        }
+        cheatChannelsContainer.addView(rgChannel)
+        // 选中通道的用法说明（随选择联动）
+        tvChannelSub = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.hint_text))
+            setPadding(0, dp(6), 0, dp(4))
+        }
+        cheatChannelsContainer.addView(tvChannelSub)
+        cheatCard.addView(cheatChannelsContainer)
+        cardDivider(cheatCard)
 
         // 灵敏度 SeekBar
         val sensitivityContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(8)
-                bottomMargin = dp(8)
-            }
+            setPadding(0, dp(12), 0, dp(4))
         }
         tvSensitivityLabel = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -468,14 +429,12 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(4)
-            }
+            ).apply { topMargin = dp(8) }
         }
+        tintSeek(sbSensitivity)
         sensitivityContainer.addView(tvSensitivityLabel)
         sensitivityContainer.addView(sbSensitivity)
-
-        // 当前灵敏度下三通道的触发阈值（随灵敏度实时刷新）
+        // 当前灵敏度下通道的触发阈值（随灵敏度实时刷新）
         tvThresholds = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(ContextCompat.getColor(context, R.color.hint_text))
@@ -483,26 +442,21 @@ class SettingsActivity : AppCompatActivity() {
         }
         sensitivityContainer.addView(tvThresholds)
         refreshThresholdLabels()
+        cheatCard.addView(sensitivityContainer)
+        rootLayout.addView(cheatCard)
 
-        cheatChannelsContainer.addView(sensitivityContainer)
-
-        rootLayout.addView(cheatChannelsContainer)
-
-        // —— 「序号内定（一次性）」独立节：勾选后下一局第 N 个放手指的人获胜，用后自动清空 ——
-        rootLayout.addView(createDivider())
-        rootLayout.addView(createSectionTitle(R.string.ordinal_section))
-
-        val ordinalHint = TextView(this).apply {
-            setText(R.string.ordinal_hint)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
+        // —— 「序号内定（一次性）」节 ——
+        sectionLabel(rootLayout, R.string.ordinal_section)
+        val ordCard = card()
+        ordCard.addView(TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(8) }
-        }
-        rootLayout.addView(ordinalHint)
-
+            ).apply { bottomMargin = dp(12) }
+            setText(R.string.ordinal_hint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
+        })
         var chipIndex = 0
         for (row in 0 until 2) {
             val chipRow = LinearLayout(this).apply {
@@ -510,7 +464,7 @@ class SettingsActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(4) }
+                ).apply { bottomMargin = dp(8) }
             }
             repeat(4) {
                 val n = ++chipIndex
@@ -527,14 +481,14 @@ class SettingsActivity : AppCompatActivity() {
                             intArrayOf(android.R.attr.state_checked),
                             GradientDrawable().apply {
                                 setColor(0xFF0491B3.toInt())
-                                cornerRadius = dp(10).toFloat()
+                                cornerRadius = dp(12).toFloat()
                             }
                         )
                         addState(
                             IntArray(0),
                             GradientDrawable().apply {
                                 setColor(0x1FFFFFFF)
-                                cornerRadius = dp(10).toFloat()
+                                cornerRadius = dp(12).toFloat()
                             }
                         )
                     }
@@ -554,38 +508,40 @@ class SettingsActivity : AppCompatActivity() {
                 ordinalChips.add(chip)
                 chipRow.addView(chip)
             }
-            rootLayout.addView(chipRow)
+            ordCard.addView(chipRow)
         }
+        rootLayout.addView(ordCard)
 
-        // —— 「反馈」节：与游戏逻辑无关的通用开关 ——
-        rootLayout.addView(createDivider())
-        rootLayout.addView(createSectionTitle(R.string.feedback_section))
+        // —— 「反馈」节 ——
+        sectionLabel(rootLayout, R.string.feedback_section)
+        val fbCard = card()
         swHaptics = SwitchCompat(this)
-        rootLayout.addView(createChannelRow(getString(R.string.haptics_label), null, swHaptics))
+        tintSwitch(swHaptics)
+        fbCard.addView(createChannelRow(getString(R.string.haptics_label), null, swHaptics))
+        cardDivider(fbCard)
         swSound = SwitchCompat(this)
-        rootLayout.addView(createChannelRow(getString(R.string.sound_label), null, swSound))
+        tintSwitch(swSound)
+        fbCard.addView(createChannelRow(getString(R.string.sound_label), null, swSound))
+        rootLayout.addView(fbCard)
 
-        // 分隔线
-        rootLayout.addView(createDivider())
-
-        // 5. 「使用说明」节
-        rootLayout.addView(createSectionTitle(R.string.howto_title))
-
-        val tvHowto = TextView(this).apply {
+        // —— 「使用说明」节 ——
+        sectionLabel(rootLayout, R.string.howto_title)
+        val howCard = card()
+        howCard.addView(TextView(this).apply {
             setText(R.string.howto_body)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(ContextCompat.getColor(context, R.color.hint_text))
-            setLineSpacing(0f, 1.3f)
-        }
-        rootLayout.addView(tvHowto)
+            setLineSpacing(dp(3).toFloat(), 1.15f)
+        })
+        rootLayout.addView(howCard)
 
-        // 项目 GitHub 地址（GitHub 图标 + 链接，点击打开浏览器）
+        // GitHub 行 + 版权（卡片外）
         val tvGithub = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = dp(16)
+                topMargin = dp(22)
             }
             text = "github.com/yishi-gh/Cheatwazi"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -602,22 +558,115 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         rootLayout.addView(tvGithub)
-
-        // 对原版的尊重声明
-        val tvCopyright = TextView(this).apply {
+        rootLayout.addView(TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(10)
-            }
+            ).apply { topMargin = dp(10) }
             setText(R.string.copyright_note)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             setTextColor(ContextCompat.getColor(context, R.color.hint_text))
-        }
-        rootLayout.addView(tvCopyright)
+        })
 
         setContentView(scrollView)
+    }
+
+    // —— UI 构建辅助 ——
+    /** 卡片外节标题：小号灰色粗体，带字距 */
+    private fun sectionLabel(parent: LinearLayout, resId: Int) {
+        parent.addView(TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8); bottomMargin = dp(10) }
+            setText(resId)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.hint_text))
+            typeface = Typeface.DEFAULT_BOLD
+            letterSpacing = 0.08f
+        })
+    }
+
+    /** 圆角分组卡片 */
+    private fun card(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = GradientDrawable().apply {
+            setColor(0xFF121417.toInt())
+            cornerRadius = dp(16).toFloat()
+        }
+        setPadding(dp(16), dp(8), dp(16), dp(8))
+    }
+
+    /** 卡片内细分隔线 */
+    private fun cardDivider(parent: LinearLayout) {
+        parent.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
+            ).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+            setBackgroundColor(0x14FFFFFF.toInt())
+        })
+    }
+
+    /** 模式分段按钮：选中青底白字，未选暗底灰字 */
+    private fun modeSegment(textRes: Int): TextView = TextView(this).apply {
+        id = View.generateViewId()
+        layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(8) }
+        setText(textRes)
+        gravity = Gravity.CENTER
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    private fun updateModeSegment() {
+        val selBg = GradientDrawable().apply {
+            setColor(0xFF0491B3.toInt())
+            cornerRadius = dp(12).toFloat()
+        }
+        val unBg = GradientDrawable().apply {
+            setColor(0x1AFFFFFF.toInt())
+            cornerRadius = dp(12).toFloat()
+        }
+        val winners = selectedMode == GameEngine.MODE_WINNERS
+        tvModeWinners.background = if (winners) selBg else unBg
+        tvModeWinners.setTextColor(if (winners) 0xFFFFFFFF.toInt() else 0xFF9AA6A6.toInt())
+        tvModeTeams.background = if (winners) unBg else selBg
+        tvModeTeams.setTextColor(if (winners) 0xFF9AA6A6.toInt() else 0xFFFFFFFF.toInt())
+    }
+
+    private fun tintSwitch(sw: SwitchCompat) {
+        sw.thumbTintList = ColorStateList(
+            arrayOf(
+                intArrayOf(-android.R.attr.state_checked),
+                intArrayOf(android.R.attr.state_checked)
+            ),
+            intArrayOf(0xFFE6E9E9.toInt(), 0xFFFFFFFF.toInt())
+        )
+        sw.trackTintList = ColorStateList(
+            arrayOf(
+                intArrayOf(-android.R.attr.state_checked),
+                intArrayOf(android.R.attr.state_checked)
+            ),
+            intArrayOf(0x2EFFFFFF, 0xE60491B3.toInt())
+        )
+    }
+
+    private fun tintRadio(rb: AppCompatRadioButton) {
+        rb.buttonTintList = ColorStateList(
+            arrayOf(
+                intArrayOf(-android.R.attr.state_checked),
+                intArrayOf(android.R.attr.state_checked)
+            ),
+            intArrayOf(0x55FFFFFF, 0xFF0491B3.toInt())
+        )
+    }
+
+    private fun tintSeek(sb: SeekBar) {
+        val c = ColorStateList.valueOf(0xFF0491B3.toInt())
+        sb.progressTintList = c
+        sb.thumbTintList = c
     }
 
     // —— 动态采样判定 ——
@@ -660,11 +709,8 @@ class SettingsActivity : AppCompatActivity() {
     private fun loadInitialPrefs() {
         val s = Prefs.load(this)
 
-        if (s.mode == GameEngine.MODE_WINNERS) {
-            rbWinners.isChecked = true
-        } else {
-            rbTeams.isChecked = true
-        }
+        selectedMode = s.mode
+        updateModeSegment()
         updateModeVisibility(s.mode)
 
         sbWinnerCount.progress = (s.winnerCount - 1).coerceIn(0, 7)
@@ -680,12 +726,16 @@ class SettingsActivity : AppCompatActivity() {
         swHaptics.isChecked = s.hapticsOn
         swSound.isChecked = s.soundOn
 
-        swCheatEnabled.isChecked = s.cheatEnabled
-        updateCheatSectionState(s.cheatEnabled)
-
-        swPressure.isChecked = s.pressureOn
-        swTilt.isChecked = s.tiltOn
-        swLift.isChecked = s.liftOn
+        val channelOn = s.cheatChannel != CheatEngine.CHANNEL_OFF
+        swCheatEnabled.isChecked = channelOn
+        when (s.cheatChannel) {
+            CheatEngine.CHANNEL_PRESSURE -> rbPressure.isChecked = true
+            CheatEngine.CHANNEL_TILT -> rbTilt.isChecked = true
+            CheatEngine.CHANNEL_ORDINAL -> rbOrdinal.isChecked = true
+            else -> rbLift.isChecked = true
+        }
+        updateCheatSectionState(channelOn)
+        updateChannelUi()
 
         sbSensitivity.progress = s.sensitivity.coerceIn(0, 2)
         tvSensitivityLabel.text = getString(R.string.sensitivity_label, getSensitivityName(s.sensitivity))
@@ -693,11 +743,8 @@ class SettingsActivity : AppCompatActivity() {
 
     // —— 绑定控件事件监听 ——
     private fun bindListeners() {
-        rgMode.setOnCheckedChangeListener { _, checkedId ->
-            val mode = if (checkedId == rbWinners.id) GameEngine.MODE_WINNERS else GameEngine.MODE_TEAMS
-            updateModeVisibility(mode)
-            if (isInitialized) saveCurrentPrefs()
-        }
+        tvModeWinners.setOnClickListener { setMode(GameEngine.MODE_WINNERS) }
+        tvModeTeams.setOnClickListener { setMode(GameEngine.MODE_TEAMS) }
 
         sbWinnerCount.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -732,15 +779,9 @@ class SettingsActivity : AppCompatActivity() {
             if (isInitialized) saveCurrentPrefs()
         }
 
-        swPressure.setOnCheckedChangeListener { _, _ ->
-            if (isInitialized) saveCurrentPrefs()
-        }
-
-        swTilt.setOnCheckedChangeListener { _, _ ->
-            if (isInitialized) saveCurrentPrefs()
-        }
-
-        swLift.setOnCheckedChangeListener { _, _ ->
+        // 单通道互斥：切换选择即保存并联动用法说明与序号块可用性
+        rgChannel.setOnCheckedChangeListener { _, _ ->
+            updateChannelUi()
             if (isInitialized) saveCurrentPrefs()
         }
 
@@ -757,16 +798,20 @@ class SettingsActivity : AppCompatActivity() {
 
     // —— 保存配置 ——
     private fun saveCurrentPrefs() {
+        val selectedChannel = when {
+            rbPressure.isChecked -> CheatEngine.CHANNEL_PRESSURE
+            rbTilt.isChecked -> CheatEngine.CHANNEL_TILT
+            rbLift.isChecked -> CheatEngine.CHANNEL_LIFT
+            rbOrdinal.isChecked -> CheatEngine.CHANNEL_ORDINAL
+            else -> CheatEngine.CHANNEL_LIFT
+        }
         val snapshot = Prefs.Snapshot(
-            mode = if (rbWinners.isChecked) GameEngine.MODE_WINNERS else GameEngine.MODE_TEAMS,
+            mode = selectedMode,
             winnerCount = sbWinnerCount.progress + 1,
             teamCount = sbTeamCount.progress + 2,
             hapticsOn = swHaptics.isChecked,
             soundOn = swSound.isChecked,
-            cheatEnabled = swCheatEnabled.isChecked,
-            pressureOn = swPressure.isChecked,
-            tiltOn = swTilt.isChecked,
-            liftOn = swLift.isChecked,
+            cheatChannel = if (swCheatEnabled.isChecked) selectedChannel else CheatEngine.CHANNEL_OFF,
             sensitivity = sbSensitivity.progress,
             ordinalTargets = ordinalChips
                 .mapIndexed { i, chip -> if (chip.isChecked) i + 1 else null }
@@ -777,40 +822,42 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     // —— 联动与辅助方法 ——
-    /** 按硬件检测结果联动三通道开关的可用性与说明文案 */
+    /** 按硬件检测结果联动单选通道的可用性（压力/倾斜有硬件前提） */
     private fun applyChannelAvailability() {
-        // 姿态通道：加速度计实时判定，缺失则禁用
         val tiltOk = tiltSensor != null
-        swTilt.isEnabled = tiltOk
-        if (!tiltOk) swTilt.isChecked = false
-        tvTiltSub.text = if (tiltOk) "读条期间，把手机朝内定赢家那侧压低并保持半秒"
-        else "本机无加速度计，此通道不可用"
-        tvTiltSub.setTextColor(
-            if (tiltOk) ContextCompat.getColor(this, R.color.hint_text) else 0xFFFF5252.toInt()
+        rbTilt.isEnabled = tiltOk
+        rbTilt.text = getString(R.string.channel_tilt) +
+                if (tiltOk) "" else "（本机无加速度计，不可用）"
+        rbTilt.setTextColor(
+            if (tiltOk) 0xFFFFFFFF.toInt() else 0xFFFF5252.toInt()
         )
+        if (!tiltOk && rbTilt.isChecked) rbLift.isChecked = true
 
-        // 压力通道：以最近一次自检采样结果为准，不可用则禁用并强制关闭
-        when (pressureSupport) {
-            Prefs.PRESSURE_DEAD -> {
-                swPressure.isEnabled = false
-                swPressure.isChecked = false
-                tvPressureSub.text = "本机压力数值恒定，此通道不可用"
-                tvPressureSub.setTextColor(0xFFFF5252.toInt())
-            }
-            Prefs.PRESSURE_OK -> {
-                swPressure.isEnabled = true
-                tvPressureSub.text = "读条期间，用力按压屏幕约半秒"
-                tvPressureSub.setTextColor(ContextCompat.getColor(this, R.color.hint_text))
-            }
-            else -> {
-                swPressure.isEnabled = true
-                tvPressureSub.text = "读条期间，用力按压屏幕约半秒（先完成上方设备自检）"
-                tvPressureSub.setTextColor(ContextCompat.getColor(this, R.color.hint_text))
-            }
+        rbPressure.isEnabled = pressureSupport != Prefs.PRESSURE_DEAD
+        rbPressure.text = getString(R.string.channel_pressure) +
+                if (pressureSupport == Prefs.PRESSURE_DEAD) "（本机压力数值恒定，不可用）" else ""
+        rbPressure.setTextColor(
+            if (pressureSupport == Prefs.PRESSURE_DEAD) 0xFFFF5252.toInt() else 0xFFFFFFFF.toInt()
+        )
+        if (pressureSupport == Prefs.PRESSURE_DEAD && rbPressure.isChecked) rbLift.isChecked = true
+        updateChannelUi()
+    }
+
+    /** 选中通道的用法说明与序号勾选块可用性 */
+    private fun updateChannelUi() {
+        tvChannelSub.text = when {
+            rbPressure.isChecked -> "读条期间，用力按压屏幕约半秒；多人重按则按力度取前 N 名"
+            rbTilt.isChecked -> "读条期间，把手机朝获胜者那侧压低半秒"
+            rbLift.isChecked -> "读条期间，手指快速抬起再按回；多人可同时各自指定自己"
+            rbOrdinal.isChecked -> "勾选后，下一局第 N 个放手指的人赢，用一次自动失效"
+            else -> ""
         }
-        // 微抬通道：纯软件逻辑，恒可用
-        tvLiftSub.text = "读条期间，手指快速抬起并立即按回原处"
-        tvLiftSub.setTextColor(ContextCompat.getColor(this, R.color.hint_text))
+        tvChannelSub.setTextColor(ContextCompat.getColor(this, R.color.hint_text))
+        val ordinalActive = swCheatEnabled.isChecked && rbOrdinal.isChecked
+        ordinalChips.forEach { chip ->
+            chip.isEnabled = ordinalActive
+            chip.alpha = if (ordinalActive) 1.0f else 0.4f
+        }
     }
 
     /** 作弊总开关：压力通道未完成自检前禁用 */
@@ -818,7 +865,7 @@ class SettingsActivity : AppCompatActivity() {
         val ready = pressureSupport != Prefs.PRESSURE_UNKNOWN
         swCheatEnabled.isEnabled = ready
         if (!ready) swCheatEnabled.isChecked = false
-        tvCheatSub.text = if (ready) "开启后，下方三条通道与序号内定才可用"
+        tvCheatSub.text = if (ready) "开启后选择一条作弊通道，多通道不叠加"
         else "请先完成上方设备自检"
         tvCheatSub.setTextColor(
             if (ready) ContextCompat.getColor(this, R.color.hint_text) else 0xFFFF5252.toInt()
@@ -849,16 +896,20 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    /** 切换游戏模式：分段按钮样式联动 */
+    private fun setMode(mode: Int) {
+        if (selectedMode == mode) return
+        selectedMode = mode
+        updateModeSegment()
+        updateModeVisibility(mode)
+        if (isInitialized) saveCurrentPrefs()
+    }
+
     private fun updateCheatSectionState(enabled: Boolean) {
         cheatChannelsContainer.alpha = if (enabled) 1.0f else 0.4f
         setViewGroupEnabled(cheatChannelsContainer, enabled)
-        // 序号内定已独立成节，同样跟随总开关的可用态
-        ordinalChips.forEach { chip ->
-            chip.isEnabled = enabled
-            chip.alpha = if (enabled) 1.0f else 0.4f
-        }
         // 总开关打开时，仍要保持硬件不可用通道的禁用态
-        if (enabled) applyChannelAvailability()
+        if (enabled) applyChannelAvailability() else updateChannelUi()
     }
 
     private fun setViewGroupEnabled(view: View, enabled: Boolean) {
@@ -876,34 +927,6 @@ class SettingsActivity : AppCompatActivity() {
             1 -> getString(R.string.sens_1)
             2 -> getString(R.string.sens_2)
             else -> getString(R.string.sens_1)
-        }
-    }
-
-    private fun createSectionTitle(resId: Int): TextView {
-        return TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(12)
-            }
-            setText(resId)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(ContextCompat.getColor(context, R.color.hint_text))
-            typeface = Typeface.DEFAULT_BOLD
-        }
-    }
-
-    private fun createDivider(): View {
-        return View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(1).coerceAtLeast(1)
-            ).apply {
-                topMargin = dp(20)
-                bottomMargin = dp(20)
-            }
-            setBackgroundColor(0x22FFFFFF)
         }
     }
 

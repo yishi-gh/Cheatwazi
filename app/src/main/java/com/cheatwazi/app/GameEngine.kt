@@ -34,8 +34,9 @@ class GameEngine(
         const val MODE_TEAMS = 1
         const val MIN_POINTERS = 2
         const val MAX_WINNERS = 8            // 赢家数量上限
-        const val STABLE_MS = 800L          // 触点集合稳定此时长后开始读条
-        const val SPIN_MS = 1900L           // 读条时长：前段浅色弧退回 300ms + 重新扫入一圈 1600ms
+        const val STABLE_MS = 1500L         // 稳定期=色环张开时长：合拢后立即开始读条（两圈连续）
+        const val SPIN_SWEEP_MS = 1500L     // 读条弧单向张开一圈的时长（张开 241°/s=旋转速度，尾端惯性静止，对齐原版）
+        const val SPIN_RECede_MS = 1500L    // 读条中途成员变动后，读条弧尾端缩回的时长（与新手指第一圈同速同止）
         const val LIFT_REJOIN_MS = 350L     // 抬起后等待按回的时长，超时视为离场
         const val LOSER_DIE_DELAY_MS = 1200L // 结果公布后输家保持此时长再同时缩小消失（对齐原版）
         const val RESULT_EXIT_DELAY_MS = 1200L // 全部松手后延迟此时长才开始消失动画（须大于 UI 合拢时长 300ms，避免半途跳变）
@@ -59,16 +60,20 @@ class GameEngine(
         private set
     val pointers = ArrayList<Pointer>()
     private var nextColor = 0
+    private var nextOrdinal = 0
     private var stableSince = 0L
     private var spinStart = 0L
+    /** 本轮读条的弧退回时长：正常进读条为 0（两圈连续），中途成员变动为 SPIN_RECede_MS */
+    var spinRecedeMs = 0L
+        private set
     var events: Events? = null
 
     /** 传感器侧写入的最新重力读数（设备坐标，m/s²），空表示不可用 */
     @Volatile
     var latestGravity: FloatArray? = null
 
-    /** 序号内定（一次性）：本轮放手指的第 N 个（1 起）内定获胜；
-     *  结算时消费一次后自动清空，UI 层据此同步清除持久化设置 */
+    /** 序号内定（一次性）：本轮第 N 个（1 起，按创建序号）放手指的人内定获胜；
+     *  命中才置 ordinalApplied（UI 层据此清除持久化设置），一局结束清空 */
     var ordinalTargets: Set<Int> = emptySet()
     var ordinalApplied: Boolean = false
         private set
@@ -111,15 +116,27 @@ class GameEngine(
         }
         val p = tryRevive(id, x, y, time, pressure, major)
             ?: newPointer(id, x, y, time).also {
+                it.creationOrdinal = ++nextOrdinal
                 pointers.add(it)
                 when (phase) {
                     Phase.READY -> stableSince = time    // 新成员加入：稳定期重来
-                    Phase.SPIN -> spinStart = time       // 新成员加入：重新读条
+                    Phase.SPIN -> {
+                        spinStart = time                 // 新成员加入：重新读条
+                        spinRecedeMs = SPIN_RECede_MS    // 已扫的弧先慢速退回再重扫
+                        it.joinSpinAt = time             // UI 层播快速第一圈
+                    }
                     else -> {}
                 }
             }
+        p.pressure = pressure
+        p.touchMajor = major
         p.addSample(pressure, major)
         p.sealBaselineIfNeeded(time, CheatEngine.BASELINE_WINDOW_MS)
+        // 序号通道：第 N 个创建序号的手指落下瞬间封印（命中才消费设置）
+        if (p.creationOrdinal in ordinalTargets) {
+            cheat.sealOrdinal(p.id)
+            if (p.id in cheat.sealedTargetIds) ordinalApplied = true
+        }
         events?.onFingerDown(p)
     }
 
@@ -127,6 +144,8 @@ class GameEngine(
         val p = pointers.firstOrNull { it.id == id && it.isDown } ?: return
         p.x = x
         p.y = y
+        p.pressure = pressure
+        p.touchMajor = major
         p.addSample(pressure, major)
         p.sealBaselineIfNeeded(time, CheatEngine.BASELINE_WINDOW_MS)
     }
@@ -143,6 +162,7 @@ class GameEngine(
         phase = Phase.WAITING
         pointers.clear()
         nextColor = 0
+        nextOrdinal = 0
         stableSince = 0L
         winnerIds = emptyList()
         teamOf = emptyMap()
@@ -176,12 +196,16 @@ class GameEngine(
             pointers.removeAll { it in gone }
             if (phase == Phase.SPIN && downCount >= MIN_POINTERS) {
                 spinStart = now     // 有人离场但人数仍够：重新读条
+                spinRecedeMs = SPIN_RECede_MS
             } else {
                 toWaiting()
             }
         }
 
         val down = pointers.filter { it.isDown }
+        // 基线封板不能只依赖 onMove：手指完全静止时不再产生触摸事件，
+        // 必须由每帧 tick 推进封板，否则"按住不动"的压力信号永远无法检测
+        down.forEach { it.sealBaselineIfNeeded(now, CheatEngine.BASELINE_WINDOW_MS) }
 
         when (phase) {
             Phase.WAITING -> {
@@ -195,10 +219,12 @@ class GameEngine(
                 if (down.size >= MIN_POINTERS && now - stableSince >= STABLE_MS) {
                     phase = Phase.SPIN
                     spinStart = now
+                    spinRecedeMs = 0L    // 正常进读条：无退回，两圈连续
                 }
             }
             Phase.SPIN -> {
-                if (down.size >= MIN_POINTERS && now - spinStart >= SPIN_MS) {
+                if (down.size >= MIN_POINTERS &&
+                    now - spinStart >= spinRecedeMs + SPIN_SWEEP_MS) {
                     settle(down, now)
                 }
             }
@@ -214,7 +240,7 @@ class GameEngine(
     /** 读条进度 0..1，仅读条阶段有效 */
     fun readoutProgress(now: Long): Float =
         if (phase != Phase.SPIN) 0f
-        else ((now - spinStart).toFloat() / SPIN_MS).coerceIn(0f, 1f)
+        else ((now - spinStart).toFloat() / (spinRecedeMs + SPIN_SWEEP_MS)).coerceIn(0f, 1f)
 
     /** 当前读条轮次的起始时刻，UI 层用它对齐读条弧的退回/扫入动画 */
     val spinStartAt: Long get() = spinStart
@@ -232,7 +258,7 @@ class GameEngine(
     private fun tryRevive(
         id: Int, x: Float, y: Float, time: Long, pressure: Float, major: Float,
     ): Pointer? {
-        if (!cheat.cfg.enabled || !cheat.cfg.liftOn) return null
+        if (!cheat.cfg.enabled || cheat.cfg.channel != CheatEngine.CHANNEL_LIFT) return null
         // 微抬只在就位与读条阶段判定；等待阶段的快速点击/双击是正常操作
         if (phase != Phase.READY && phase != Phase.SPIN) return null
         // 多个触点同时落在按回窗口内时，取距离最近者，避免复活错对象
@@ -262,18 +288,18 @@ class GameEngine(
     private fun settle(down: List<Pointer>, now: Long) {
         resultAt = now
         val ids = down.map { it.id }
-        // 内定目标：序号内定（按放手指的先后次序）+ 通道封印（压力/倾斜/微抬），
-        // 顺序即优先级，赢家名额不足时取靠前者
-        val ordinalRigged = if (ordinalTargets.isNotEmpty()) {
-            pointers.asSequence()
-                .mapIndexed { i, p -> (i + 1) to p }   // pointers 即本轮按下创建顺序
-                .filter { (n, p) -> n in ordinalTargets && p.isDown && p.id in ids }
-                .map { it.second.id }
-                .toList()
-        } else emptyList()
-        ordinalApplied = ordinalTargets.isNotEmpty()
-        ordinalTargets = emptySet()                    // 一次性：结算即消费
-        val rigged = (ordinalRigged + cheat.sealedTargetIds.filter { it in ids }).distinct()
+        // 内定目标：统一来自通道封印（序号在手指落下时已封印），按触发时间序；
+        // 压力通道按超阈倍率最重排序；名额不足时截断，其余随机补足/均分
+        val rigged = cheat.sealedTargetIds
+            .filter { it in ids }
+            .let { list ->
+                if (cheat.cfg.channel == CheatEngine.CHANNEL_PRESSURE) {
+                    list.sortedByDescending { cheat.pressureRatioOf(it) }
+                } else {
+                    list
+                }
+            }
+        ordinalTargets = emptySet()                    // 一次性：一局结束即消费
 
         if (cfg.mode == MODE_WINNERS) {
             val k = cfg.winnerCount.coerceIn(1, minOf(ids.size, MAX_WINNERS))
@@ -285,26 +311,26 @@ class GameEngine(
             // 对齐原版：输家在结果公布后保持 1.2s 再同时缩小消失
             eliminateAt = ids.filter { it !in winners }.associateWith { LOSER_DIE_DELAY_MS }
         } else {
-            // 分队：内定目标固定进第 1 组，其余随机均匀分
-            val ordered = ids.toMutableList()
-            if (rigged.isNotEmpty()) {
-                ordered.removeAll(rigged)
-                ordered.shuffle(random)
-                ordered.addAll(0, rigged)
-            } else {
-                ordered.shuffle(random)
-            }
-            val n = ordered.size
+            // 分队：内定目标固定进第 1 组（组 0 容量自动扩到容纳全部内定者），
+            // 其余人随机均匀分到各组
             val g = cfg.teamCount.coerceIn(2, 5)
-            // 尽量均匀：前 n % g 组多一人
-            val base = n / g
-            val extra = n % g
+            val n = ids.size
+            val others = ids.filter { it !in rigged }.shuffled(random)
+            val regular0 = n / g + if (n % g > 0) 1 else 0
+            val team0 = rigged + others.take((regular0 - rigged.size).coerceAtLeast(0))
+            val rest = others.drop((regular0 - rigged.size).coerceAtLeast(0))
             val map = HashMap<Int, Int>()
+            team0.forEach { map[it] = 0 }
+            // 剩余人均分到组 1..g-1：前 (rest % (g-1)) 组多一人
+            val m = rest.size
+            val div = g - 1
+            val base = m / div
+            val extra = m % div
             var idx = 0
-            for (t in 0 until g) {
-                val size = base + if (t < extra) 1 else 0
+            for (t in 1 until g) {
+                val size = base + if (t - 1 < extra) 1 else 0
                 repeat(size) {
-                    if (idx < n) map[ordered[idx++]] = t
+                    if (idx < m) map[rest[idx++]] = t
                 }
             }
             teamOf = map

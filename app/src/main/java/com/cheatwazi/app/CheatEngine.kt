@@ -3,28 +3,29 @@ package com.cheatwazi.app
 import kotlin.math.hypot
 
 /**
- * 伪随机作弊引擎：识别三种旁人难以察觉的物理信号，锁定"内定"赢家。
- * 信号只在游戏就位（READY）与洗牌（SPIN）阶段评估，触发一次即锁定，
- * 且锁定结果不可逆——中途有人退出也不失效，仅在结果编排时校验目标
- * 是否仍在屏。
+ * 伪随机作弊引擎：识别旁人难以察觉的物理信号，锁定"内定"赢家。
+ * 单通道互斥：同一时间只有 cfg.channel 指定的一条通道生效，运行期不存在
+ * 多通道竞争；同通道内允许多目标（压力/微抬），结算时按各自规则排序占名额。
  *
- * 通道 1（压力）：某触点的压力或接触面积相对自身按下初期的基线
- *   持续增长超过阈值——即用力按压屏幕——该触点成为内定赢家。
- *   用相对基线的倍率做阈值，天然免疫不同设备数值单位与手指大小差异。
- * 通道 2（姿态）：手机相对就位瞬间发生持续倾斜，倾斜造成的"下坡方向"
- *   指向谁，谁成为内定赢家。想指定某人，把手机朝他那侧轻轻压低即可。
- *   用重力增量在屏幕平面的投影判定方向，因此对手机初始摆放角度不敏感。
- * 通道 3（微抬）：手指快速抬起并在窗口时间内按回原位——视觉上
- *   几乎不可见的动作——该触点成为内定赢家。回按匹配在 GameEngine
- *   的 onDown 中完成，这里只负责接受结果。
+ * 通道 1（压力）：触点的压力或接触面积相对自身按下初期的基线持续增长超过
+ *   阈值——即用力按压屏幕。允许多人同时触发；赢家名额不足时由结算层按
+ *   超阈倍率最重者取前 n。
+ * 通道 2（倾斜）：手机相对就位瞬间持续倾斜，倾斜造成的"下坡方向"指向谁，
+ *   谁成为内定赢家。单目标：锁定一人后本通道停止评估。
+ * 通道 3（微抬）：手指快速抬起并在窗口时间内按回原位。事件驱动，允许多
+ *   人各自触发。
+ * 通道 4（序号）：由 GameEngine 在第 N 个创建序号的手指落下时直接触发，
+ *   引擎不评估。
+ *
+ * 所有信号只在游戏就位（READY）与读条（SPIN）阶段产生，锁定结果不可逆
+ * ——中途有人退出也不失效，仅在结算时校验目标是否仍在屏。
  */
 class CheatEngine(val cfg: Config) {
 
     data class Config(
         val enabled: Boolean = true,
-        val pressureOn: Boolean = true,
-        val tiltOn: Boolean = true,
-        val liftOn: Boolean = true,
+        /** 生效通道：-1 关闭 / 0 压力 / 1 倾斜 / 2 微抬（3 序号由 GameEngine 触发，不经此判断） */
+        val channel: Int = CHANNEL_LIFT,
         /** 0 隐蔽（阈值高） 1 标准 2 灵敏（阈值低） */
         val sensitivity: Int = 1,
     ) {
@@ -46,9 +47,11 @@ class CheatEngine(val cfg: Config) {
         const val CHANNEL_PRESSURE = 0
         const val CHANNEL_TILT = 1
         const val CHANNEL_LIFT = 2
+        const val CHANNEL_ORDINAL = 3
+        const val CHANNEL_OFF = -1
     }
 
-    /** 内定赢家 pointer id 列表（按触发顺序）；微抬通道允许多人各自触发 */
+    /** 内定赢家 pointer id 列表（按触发顺序；压力通道由结算层按倍率重排） */
     val sealedTargetIds = ArrayList<Int>()
     /** 首个内定赢家 pointer id，-1 表示尚无信号 */
     var sealedTargetId = -1
@@ -57,9 +60,14 @@ class CheatEngine(val cfg: Config) {
     var sealedChannel = -1
         private set
 
+    /** 压力通道：已封印触点的超阈倍率（结算时按最重排序用），持续更新 */
+    private val pressureRatios = HashMap<Int, Float>()
+
     /** 就位瞬间锁定的重力基准（设备坐标，m/s²） */
     private var gravityRef: FloatArray? = null
     private var tiltStart = -1L
+    /** 倾斜通道已锁定一人，停止评估 */
+    private var tiltSealed = false
 
     val fired: Boolean get() = sealedTargetIds.isNotEmpty()
 
@@ -68,8 +76,10 @@ class CheatEngine(val cfg: Config) {
         sealedTargetIds.clear()
         sealedTargetId = -1
         sealedChannel = -1
+        pressureRatios.clear()
         gravityRef = null
         tiltStart = -1L
+        tiltSealed = false
     }
 
     /** 游戏就位（进入 READY）时锁定姿态基准；每轮重新锁定，避免跨轮基准过期 */
@@ -88,58 +98,57 @@ class CheatEngine(val cfg: Config) {
     }
 
     /** GameEngine 检测到"抬起-按回"成立时回调；调用方须在清除 p.liftTime 之前调用。
-     *  微抬通道支持多目标：每个按回的触点各自封印（赢家名额在结算时裁剪） */
+     *  仅微抬通道生效；允许多人各自封印（赢家名额在结算时裁剪） */
     fun onLiftReturn(p: Pointer, now: Long) {
-        if (!cfg.enabled || !cfg.liftOn) return
+        if (!cfg.enabled || cfg.channel != CHANNEL_LIFT) return
         if (now - p.liftTime <= cfg.liftWindowMs + 60L && p.id !in sealedTargetIds) {
             seal(p.id, CHANNEL_LIFT)
         }
     }
 
+    /** 序号通道：GameEngine 在第 N 个创建序号的手指落下时调用 */
+    fun sealOrdinal(id: Int) {
+        if (!cfg.enabled || cfg.channel != CHANNEL_ORDINAL) return
+        if (id !in sealedTargetIds) seal(id, CHANNEL_ORDINAL)
+    }
+
+    /** 压力通道封印者的超阈倍率，未记录返回 0 */
+    fun pressureRatioOf(id: Int): Float = pressureRatios[id] ?: 0f
+
     /**
-     * 每帧评估压力与姿态通道。pointers 为在屏触点，gravity 为最新重力
-     * 读数（可为 null：设备无传感器）。返回本次新锁定的目标 id，无则 -1。
+     * 每帧评估当前通道（仅压力/倾斜在此处理）。pointers 为在屏触点，
+     * gravity 为最新重力读数（可为 null：设备无传感器）。
      */
     fun evaluate(down: List<Pointer>, now: Long, gravity: FloatArray?): Int {
-        if (!cfg.enabled || fired) return -1
+        if (!cfg.enabled) return -1
         if (down.isEmpty()) return -1
-
-        if (cfg.pressureOn) {
-            val hit = evaluatePressure(down, now)
-            if (hit >= 0) return hit
+        return when (cfg.channel) {
+            CHANNEL_PRESSURE -> evaluatePressure(down, now)
+            CHANNEL_TILT ->
+                if (gravity != null && !tiltSealed) evaluateTilt(down, now, gravity) else -1
+            else -> -1
         }
-        if (cfg.tiltOn && gravity != null) {
-            val hit = evaluateTilt(down, now, gravity)
-            if (hit >= 0) return hit
-        }
-        return -1
     }
 
     /**
-     * 压力通道评估：所有在屏触点独立计时，仅当"恰好一个"触点持续超阈满
-     * BOOST_HOLD_MS 时触发。多指同时超阈视为信号混乱（旁人无意重按），
-     * 一律不采信。
+     * 压力通道评估：所有在屏触点独立计时，持续超阈满 BOOST_HOLD_MS 者各自
+     * 封印（多目标）；封印后持续记录倍率，供结算层按最重排序。
      */
     private fun evaluatePressure(down: List<Pointer>, now: Long): Int {
-        var boostedCount = 0
-        var candidate: Pointer? = null
         for (p in down) {
             if (!p.baselineSealed) continue
             val ratioP = if (p.baselinePressure > 0f) p.pressure / p.baselinePressure else 1f
             val ratioM = if (p.baselineMajor > 0f) p.touchMajor / p.baselineMajor else 1f
             val ratio = maxOf(ratioP, ratioM)
             if (ratio >= cfg.pressureMult) {
-                boostedCount++
                 if (p.boostStart < 0L) p.boostStart = now
-                if (now - p.boostStart >= BOOST_HOLD_MS) candidate = p
+                if (now - p.boostStart >= BOOST_HOLD_MS) {
+                    if (p.id !in sealedTargetIds) seal(p.id, CHANNEL_PRESSURE)
+                    pressureRatios[p.id] = ratio
+                }
             } else if (ratio < cfg.pressureMult * BOOST_RELEASE_FACTOR) {
                 p.boostStart = -1L
             }
-        }
-        if (boostedCount > 1) return -1
-        candidate?.let {
-            seal(it.id, CHANNEL_PRESSURE)
-            return sealedTargetId
         }
         return -1
     }
@@ -173,6 +182,7 @@ class CheatEngine(val cfg: Config) {
                 }
                 best?.let {
                     seal(it.id, CHANNEL_TILT)
+                    tiltSealed = true
                     return sealedTargetId
                 }
             }

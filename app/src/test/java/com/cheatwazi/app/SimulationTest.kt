@@ -37,10 +37,10 @@ class SimulationTest {
         }
         t += 10
         e.tick(t)          // → READY
-        t += 800
-        e.tick(t)          // → 读条
-        t += 1900
-        e.tick(t)          // → RESULT
+        t += 1500
+        e.tick(t)          // 稳定期满 → 读条
+        t += 1500
+        e.tick(t)          // 读条合拢 → RESULT
         return t
     }
 
@@ -159,10 +159,10 @@ class SimulationTest {
         t += 10
         e.tick(t)
         assertEquals(GameEngine.Phase.READY, e.phase)
-        t += 800
+        t += 1500
         e.tick(t)
         assertEquals(GameEngine.Phase.SPIN, e.phase)
-        t += 1900
+        t += 1500
         e.tick(t)
         assertEquals(GameEngine.Phase.RESULT, e.phase)
         assertEquals(1, e.winnerIds.size)

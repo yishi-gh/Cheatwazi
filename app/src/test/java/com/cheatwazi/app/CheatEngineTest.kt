@@ -9,11 +9,9 @@ class CheatEngineTest {
 
     private fun cfg(
         enabled: Boolean = true,
-        pressure: Boolean = true,
-        tilt: Boolean = true,
-        lift: Boolean = true,
+        channel: Int = CheatEngine.CHANNEL_LIFT,
         sens: Int = 1,
-    ) = CheatEngine.Config(enabled, pressure, tilt, lift, sens)
+    ) = CheatEngine.Config(enabled, channel, sens)
 
     private fun pointer(id: Int, x: Float = 0f, y: Float = 0f, t: Long = 0) =
         Pointer(id, t, x, y)
@@ -30,18 +28,20 @@ class CheatEngineTest {
         assertTrue(p.baselineSealed)
     }
 
-    // —— 通道 1：压力 ——
+    // —— 通道 1：压力（多目标：所有持续超阈者各自封印） ——
     @Test
     fun pressure_sustainedBoost_firesOnSelf() {
-        val e = CheatEngine(cfg())
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
         val p = pointer(7)
         calibrate(p, 1.0f, 0f)
         assertEquals(1.0f, p.baselinePressure, 1e-6f)
 
         p.pressure = 1.4f
-        assertEquals(-1, e.evaluate(listOf(p), 500, null)) // 记录超阈起点
-        assertEquals(-1, e.evaluate(listOf(p), 600, null)) // 持续不足 300ms
-        assertEquals(7, e.evaluate(listOf(p), 801, null))  // 持续满 300ms
+        e.evaluate(listOf(p), 500, null)   // 记录超阈起点
+        assertFalse(e.fired)               // 持续不足 300ms
+        e.evaluate(listOf(p), 600, null)
+        assertFalse(e.fired)
+        e.evaluate(listOf(p), 801, null)   // 持续满 300ms → 封印
         assertTrue(e.fired)
         assertEquals(7, e.sealedTargetId)
         assertEquals(CheatEngine.CHANNEL_PRESSURE, e.sealedChannel)
@@ -49,7 +49,7 @@ class CheatEngineTest {
 
     @Test
     fun pressure_transientSpikeThenRelease_doesNotFire() {
-        val e = CheatEngine(cfg())
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
         val p = pointer(1)
         calibrate(p, 1.0f, 0f)
 
@@ -65,7 +65,7 @@ class CheatEngineTest {
 
     @Test
     fun pressure_belowThreshold_neverFires() {
-        val e = CheatEngine(cfg())
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
         val p = pointer(1)
         calibrate(p, 1.0f, 0f)
         p.pressure = 1.2f                       // 低于标准档 1.32 倍
@@ -76,19 +76,22 @@ class CheatEngineTest {
 
     @Test
     fun touchMajor_growth_firesWhenPressureFlat() {
-        val e = CheatEngine(cfg())
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
         val p = pointer(3)
         calibrate(p, 1.0f, 20f)                 // pressure 恒 1.0 的设备，靠面积信号
 
         p.touchMajor = 27f                      // 1.35 倍，越过标准档 1.32
-        assertEquals(-1, e.evaluate(listOf(p), 500, null))
-        assertEquals(3, e.evaluate(listOf(p), 801, null))
+        e.evaluate(listOf(p), 500, null)
+        assertFalse(e.fired)
+        e.evaluate(listOf(p), 801, null)
+        assertTrue(e.fired)
+        assertEquals(3, e.sealedTargetId)
         assertEquals(CheatEngine.CHANNEL_PRESSURE, e.sealedChannel)
     }
 
     @Test
     fun sensitivity_hidden_requiresBiggerBoost() {
-        val e = CheatEngine(cfg(sens = 0))      // 隐蔽档 1.55 倍
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE, sens = 0))
         val p = pointer(1)
         calibrate(p, 1.0f, 0f)
         p.pressure = 1.4f
@@ -97,37 +100,39 @@ class CheatEngineTest {
         assertFalse(e.fired)
     }
 
-    // —— 压力通道多指消歧 ——
+    // —— 压力通道多目标：多人重按各自封印，记录倍率供结算按最重排序 ——
     @Test
-    fun pressure_twoPointersBoosting_noOneFires() {
-        val e = CheatEngine(cfg())
+    fun pressure_twoPointersBoosting_bothSeal() {
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
         val a = pointer(1)
         val b = pointer(2)
         calibrate(a, 1.0f, 0f)
         calibrate(b, 1.0f, 0f)
         a.pressure = 1.4f
-        b.pressure = 1.4f                       // 双人同时重按，视为信号混乱
+        b.pressure = 1.5f                       // 双人同时重按：都封印
         assertEquals(-1, e.evaluate(listOf(a, b), 500, null))
         assertEquals(-1, e.evaluate(listOf(a, b), 5000, null))
-        assertFalse(e.fired)
+        assertEquals(listOf(1, 2), e.sealedTargetIds)
+        assertEquals(1.4f, e.pressureRatioOf(1), 1e-6f)
+        assertEquals(1.5f, e.pressureRatioOf(2), 1e-6f)
     }
 
     @Test
-    fun pressure_singleBoosterAmongCalmPointers_fires() {
-        val e = CheatEngine(cfg())
-        val a = pointer(1)
-        val b = pointer(2)
-        calibrate(a, 1.0f, 0f)
-        calibrate(b, 1.0f, 0f)
-        a.pressure = 1.4f                       // 仅 a 重按，b 正常
-        assertEquals(-1, e.evaluate(listOf(a, b), 500, null))
-        assertEquals(1, e.evaluate(listOf(a, b), 801, null))
+    fun pressure_ratioUpdatedWhileBoosting() {
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
+        val p = pointer(1)
+        calibrate(p, 1.0f, 0f)
+        p.pressure = 1.4f
+        e.evaluate(listOf(p), 500, null)
+        p.pressure = 1.6f                       // 持续加力：倍率跟随更新
+        e.evaluate(listOf(p), 5000, null)
+        assertEquals(1.6f, e.pressureRatioOf(1), 1e-6f)
     }
 
-    // —— 通道 2：姿态（语义：把目标那一侧压低，赢家 = 下坡方向最近者）——
+    // —— 通道 2：姿态（语义：把目标那一侧压低，赢家 = 下坡方向最近者；单目标） ——
     @Test
     fun tilt_loweringRightSide_picksRightmostPointer() {
-        val e = CheatEngine(cfg())
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_TILT))
         e.lockGravity(0f, 0f, 9.8f)
         val left = pointer(1, -100f, 0f)
         val right = pointer(2, 100f, 0f)
@@ -141,20 +146,23 @@ class CheatEngineTest {
     }
 
     @Test
-    fun tilt_loweringBottom_picksBottomPointer() {
-        val e = CheatEngine(cfg())
+    fun tilt_sealed_stopsEvaluating() {
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_TILT))
         e.lockGravity(0f, 0f, 9.8f)
-        val bottom = pointer(1, 0f, 100f)
-        val top = pointer(2, 0f, -100f)
-        // 压低底部：顶部翘起，天空方向偏向设备 +y（顶部）
-        val g = floatArrayOf(0f, 2f, 9.5f)
-        e.evaluate(listOf(bottom, top), 0, g)
-        assertEquals(1, e.evaluate(listOf(bottom, top), 600, g))
+        val left = pointer(1, -100f, 0f)
+        val right = pointer(2, 100f, 0f)
+        val g = floatArrayOf(-2f, 0f, 9.5f)
+        e.evaluate(listOf(left, right), 0, g)
+        e.evaluate(listOf(left, right), 501, g)
+        assertEquals(listOf(2), e.sealedTargetIds)
+        // 锁定一人后，即使倾斜持续也不改写目标
+        e.evaluate(listOf(left, right), 5000, g)
+        assertEquals(listOf(2), e.sealedTargetIds)
     }
 
     @Test
     fun tilt_releaseBeforeHold_resetsTimer() {
-        val e = CheatEngine(cfg())
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_TILT))
         e.lockGravity(0f, 0f, 9.8f)
         val p = pointer(1, 100f, 0f)
         val tilted = floatArrayOf(2f, 0f, 9.5f)
@@ -167,7 +175,7 @@ class CheatEngineTest {
         assertEquals(1, e.evaluate(listOf(p), 901, tilted))    // 满 500ms
     }
 
-    // —— 通道 3：微抬 ——
+    // —— 通道 3：微抬（多目标） ——
     @Test
     fun liftReturn_withinWindow_firesOnSelf() {
         val e = CheatEngine(cfg())
@@ -214,20 +222,41 @@ class CheatEngineTest {
         assertEquals(listOf(1), e.sealedTargetIds)
     }
 
+    // —— 通道 4：序号（由 GameEngine 在手指落下时触发） ——
     @Test
-    fun pressureSealed_thenLiftReturn_appendsTarget() {
-        val e = CheatEngine(cfg())
-        val a = pointer(1)
-        calibrate(a, 1.0f, 0f)
-        a.pressure = 1.4f
-        assertEquals(-1, e.evaluate(listOf(a), 500, null))  // 记录超阈起点
-        assertEquals(1, e.evaluate(listOf(a), 801, null))
-        val b = pointer(2)
-        b.liftTime = 1000L
-        e.onLiftReturn(b, 1100L)                // 压力已锁定后微抬仍可追加目标
-        assertEquals(listOf(1, 2), e.sealedTargetIds)
-        // 压力/姿态通道在已有封印后不再评估
-        assertEquals(-1, e.evaluate(listOf(a), 5000, null))
+    fun sealOrdinal_onlyInOrdinalChannel() {
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_LIFT))
+        e.sealOrdinal(7)
+        assertFalse(e.fired)                    // 非序号通道时忽略
+
+        val o = CheatEngine(cfg(channel = CheatEngine.CHANNEL_ORDINAL))
+        o.sealOrdinal(7)
+        assertTrue(o.fired)
+        assertEquals(listOf(7), o.sealedTargetIds)
+    }
+
+    @Test
+    fun sealOrdinal_samePointerTwice_singleSeal() {
+        val e = CheatEngine(cfg(channel = CheatEngine.CHANNEL_ORDINAL))
+        e.sealOrdinal(3)
+        e.sealOrdinal(3)
+        assertEquals(listOf(3), e.sealedTargetIds)
+    }
+
+    // —— 通道互斥：评估与回调只对选中通道生效 ——
+    @Test
+    fun channelMismatch_ignored() {
+        val lift = CheatEngine(cfg())           // 微抬通道
+        val p = pointer(1)
+        calibrate(p, 1.0f, 0f)
+        p.pressure = 1.4f
+        assertEquals(-1, lift.evaluate(listOf(p), 5000, null))  // 压力信号不评
+        assertFalse(lift.fired)
+
+        val pressure = CheatEngine(cfg(channel = CheatEngine.CHANNEL_PRESSURE))
+        p.liftTime = 1000L
+        pressure.onLiftReturn(p, 1100L)         // 微抬回调不生效
+        assertFalse(pressure.fired)
     }
 
     // —— 总开关 ——
@@ -240,6 +269,7 @@ class CheatEngineTest {
         assertEquals(-1, e.evaluate(listOf(p), 5000, null))
         p.liftTime = 0L
         e.onLiftReturn(p, 100L)
+        e.sealOrdinal(9)
         assertFalse(e.fired)
     }
 
@@ -259,10 +289,8 @@ class CheatEngineTest {
     fun fired_isIrreversibleWithinRound() {
         val e = CheatEngine(cfg())
         val p = pointer(1)
-        calibrate(p, 1.0f, 0f)
-        p.pressure = 1.4f
-        e.evaluate(listOf(p), 500, null)
-        e.evaluate(listOf(p), 900, null)
+        p.liftTime = 1000L
+        e.onLiftReturn(p, 1100L)
         assertTrue(e.fired)
         // 触发后继续评估不得改写目标
         assertEquals(-1, e.evaluate(listOf(p), 5000, null))

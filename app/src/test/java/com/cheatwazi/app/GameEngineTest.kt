@@ -18,10 +18,10 @@ class GameEngineTest {
     private fun runToResult(e: GameEngine, ids: List<Int>): Long {
         ids.forEachIndexed { i, id -> e.onDown(id, i * 100f, 0f, i * 50L, 1f, 0f) }
         e.tick(2000)     // READY（stableSince=2000）
-        e.tick(2800)     // 800ms 稳定 → 读条（spinStart=2800）
-        e.tick(4700)     // 1900ms 读条 → RESULT
+        e.tick(3500)     // 1500ms 稳定（=色环合拢）→ 读条（spinStart=3500）
+        e.tick(5000)     // 1500ms 读条张开合拢 → RESULT
         assertEquals(GameEngine.Phase.RESULT, e.phase)
-        return 4700L
+        return 5000L
     }
 
     @Test
@@ -57,7 +57,7 @@ class GameEngineTest {
         e.onDown(3, 200f, 0f, 500, 1f, 0f)           // 新手指加入
         e.tick(890)                                  // 距重置仅 390ms
         assertEquals(GameEngine.Phase.READY, e.phase)
-        e.tick(1300)                                 // 距重置 800ms
+        e.tick(2000)                                 // 距重置 1500ms
         assertEquals(GameEngine.Phase.SPIN, e.phase)
     }
 
@@ -88,7 +88,7 @@ class GameEngineTest {
         assertEquals(1, cheat.sealedTargetId)
         assertEquals(GameEngine.Phase.READY, e.phase)
         e.tick(3000)                                 // 稳定期重新计时后读条
-        e.tick(4900)                                 // 读条结束
+        e.tick(5400)                                 // 读条结束
         assertEquals(GameEngine.Phase.RESULT, e.phase)
         assertEquals(listOf(1), e.winnerIds)         // 内定目标保证入选
     }
@@ -105,8 +105,8 @@ class GameEngineTest {
         e.onUp(2, 2100)
         e.onDown(2, 100f, 0f, 2200, 1f, 0f)
         assertTrue(cheat.fired)
-        e.tick(3000)
-        e.tick(4900)
+        e.tick(3500)                                 // 稳定期满 → SPIN
+        e.tick(5000)                                 // 读条合拢 → RESULT
         assertEquals(2, e.winnerIds.first())
     }
 
@@ -121,8 +121,8 @@ class GameEngineTest {
         e.onDown(2, 100f, 0f, 2200, 1f, 0f)          // 内定 id=2
         e.onDown(3, 200f, 0f, 2300, 1f, 0f)
         e.onDown(4, 300f, 0f, 2400, 1f, 0f)
-        e.tick(4000)
-        e.tick(5900)
+        e.tick(3900)                                 // 稳定期满（最后加入者 +1500）→ SPIN
+        e.tick(6400)
         assertEquals(GameEngine.Phase.RESULT, e.phase)
         assertEquals(4, e.teamOf.size)
         val counts = e.teamOf.values.groupingBy { it }.eachCount()
@@ -209,7 +209,7 @@ class GameEngineTest {
         e.onUp(3, 1200)
         e.onDown(3, 200f, 0f, 1300, 1f, 0f)          // 3 号微抬按回
         assertEquals(listOf(1, 3), cheat.sealedTargetIds)
-        e.tick(2000)                                 // → SPIN
+        e.tick(1800)                                 // 稳定期满 → SPIN
         e.tick(3900)                                 // → RESULT
         assertEquals(listOf(1, 3), e.winnerIds)      // 两个微抬者都入选
         assertEquals(2, e.eliminateAt.size)
@@ -217,23 +217,30 @@ class GameEngineTest {
 
     @Test
     fun ordinalTargets_nthFingerWins() {
-        val e = engine(winnerCount = 1)
+        val e = engine(
+            winnerCount = 1,
+            cheat = CheatEngine(CheatEngine.Config(channel = CheatEngine.CHANNEL_ORDINAL)),
+        )
         e.ordinalTargets = setOf(2)
         e.onDown(1, 0f, 0f, 0, 1f, 0f)
         e.onDown(2, 100f, 0f, 50, 1f, 0f)
         e.onDown(3, 200f, 0f, 100, 1f, 0f)
         e.onDown(4, 300f, 0f, 150, 1f, 0f)
+        assertTrue(cheatOf(e).sealedTargetIds.contains(2))  // 第 2 指落下瞬间已封印
         e.tick(2000)
-        e.tick(2800)
-        e.tick(4700)
+        e.tick(3500)                                 // 稳定期满 → SPIN
+        e.tick(5000)                                 // 读条合拢 → RESULT
         assertEquals(listOf(2), e.winnerIds)         // 第 2 个放手指的人获胜
         assertTrue(e.ordinalApplied)
-        assertTrue(e.ordinalTargets.isEmpty())       // 一次性：结算即消费
+        assertTrue(e.ordinalTargets.isEmpty())       // 一次性：一局结束即消费
     }
 
     @Test
     fun ordinalTargets_multiOrdinalCappedByWinnerCount() {
-        val e = engine(winnerCount = 2)
+        val e = engine(
+            winnerCount = 2,
+            cheat = CheatEngine(CheatEngine.Config(channel = CheatEngine.CHANNEL_ORDINAL)),
+        )
         e.ordinalTargets = setOf(1, 3, 4)
         runToResult(e, listOf(1, 2, 3, 4))
         assertEquals(listOf(1, 3), e.winnerIds)      // 按放手指顺序取前两名
@@ -241,13 +248,81 @@ class GameEngineTest {
     }
 
     @Test
+    fun ordinalTargets_notHit_notConsumed() {
+        val e = engine(
+            winnerCount = 1,
+            cheat = CheatEngine(CheatEngine.Config(channel = CheatEngine.CHANNEL_ORDINAL)),
+        )
+        e.ordinalTargets = setOf(6)                  // 只来 4 人，序号未命中
+        val resultAt = runToResult(e, listOf(1, 2, 3, 4))
+        assertEquals(1, e.winnerIds.size)
+        assertTrue(e.winnerIds[0] in 1..4)
+        assertFalse(e.ordinalApplied)                // 未命中不消费，持久化设置保留
+    }
+
+    @Test
+    fun ordinalTargets_ignoresLeaverShift() {
+        // 第 3 个放手指的人离场后，第 4 个手指的列表位置变为 3，
+        // 但创建序号不变——不应被误判为序号目标
+        val e = engine(
+            winnerCount = 1,
+            cheat = CheatEngine(CheatEngine.Config(channel = CheatEngine.CHANNEL_ORDINAL)),
+        )
+        e.ordinalTargets = setOf(3)
+        e.onDown(1, 0f, 0f, 0, 1f, 0f)
+        e.onDown(2, 100f, 0f, 50, 1f, 0f)
+        e.onDown(3, 200f, 0f, 100, 1f, 0f)
+        e.onDown(4, 300f, 0f, 150, 1f, 0f)
+        e.onUp(3, 300)                               // 原第 3 指离场
+        e.tick(2000)                                 // 超时移除，回到等待
+        assertFalse(cheatOf(e).sealedTargetIds.contains(4))
+        assertTrue(cheatOf(e).sealedTargetIds.contains(3))  // 封印不可逆
+        e.tick(2900)                                 // → READY
+        e.tick(4400)                                 // 稳定期满 → SPIN
+        e.tick(5900)                                 // 读条合拢 → RESULT
+        assertEquals(GameEngine.Phase.RESULT, e.phase)
+        assertEquals(1, e.winnerIds.size)
+        assertTrue(e.winnerIds[0] in listOf(1, 2, 4))  // 内定者已离场，随机补足
+    }
+
+    @Test
     fun ordinalTargets_teams_nthFingerInFirstTeam() {
-        val e = engine(mode = GameEngine.MODE_TEAMS, teamCount = 2)
+        val e = engine(
+            mode = GameEngine.MODE_TEAMS,
+            teamCount = 2,
+            cheat = CheatEngine(CheatEngine.Config(channel = CheatEngine.CHANNEL_ORDINAL)),
+        )
         e.ordinalTargets = setOf(3)
         runToResult(e, listOf(1, 2, 3, 4))
         assertEquals(0, e.teamOf[3])                 // 序号内定进第 1 组
         assertEquals(2, e.teamOf.values.count { it == 0 })
     }
+
+    @Test
+    fun pressureChannel_heaviestWinWhenOverCapacity() {
+        // 4 人、赢家 2、三人同时重按：压力倍率最重的 2 人获胜
+        val cheat = CheatEngine(CheatEngine.Config(channel = CheatEngine.CHANNEL_PRESSURE))
+        val e = engine(winnerCount = 2, cheat = cheat)
+        e.onDown(1, 0f, 0f, 0, 1f, 0f)
+        e.onDown(2, 100f, 0f, 50, 1f, 0f)
+        e.onDown(3, 200f, 0f, 100, 1f, 0f)
+        e.onDown(4, 300f, 0f, 150, 1f, 0f)
+        e.tick(2000)                                 // READY，基线已封板
+        e.onMove(1, 0f, 0f, 2100, 1.5f, 0f)          // 三人重按，倍率各不同
+        e.onMove(2, 100f, 0f, 2100, 1.4f, 0f)
+        e.onMove(3, 200f, 0f, 2100, 1.45f, 0f)
+        e.tick(2400)                                 // 记录超阈起点
+        e.tick(2400)                                 // 记录超阈起点
+        e.tick(2710)                                 // 持续满 300ms，三人全封印
+        assertEquals(listOf(1, 2, 3), cheat.sealedTargetIds)
+        e.tick(3500)                                 // 稳定期满 → 读条
+        e.tick(5000)                                 // 读条合拢 → 结算
+        assertEquals(GameEngine.Phase.RESULT, e.phase)
+        assertEquals(listOf(1, 3), e.winnerIds)      // 最重的 1.5 / 1.45 获胜
+        assertEquals(2, e.eliminateAt.size)
+    }
+
+    private fun cheatOf(e: GameEngine): CheatEngine = e.cheat
 
     @Test
     fun singlePointer_neverStarts() {

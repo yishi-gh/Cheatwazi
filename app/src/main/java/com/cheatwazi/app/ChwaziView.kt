@@ -24,6 +24,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -199,12 +200,18 @@ class ChwaziView @JvmOverloads constructor(
     // —— 隐蔽设置入口：等待界面用手指画一个小三角 ——
     private val gesturePoints = ArrayList<Pair<Float, Float>>()
 
+    /** 顶栏安全顶距：状态栏/挖孔 inset 的较大值，避免 UI 压进挖孔区 */
+    private var safeTopPx = 0f
+
     // —— 成员变动与读条锚点：全员色环重扫（成员变动）/ 读条弧退回+扫入（锚点重置） ——
     private var lastMembership = ""
     private var membershipChangedAt = 0L
     private var lastSpinStart = -1L
+    private var lastPhase: GameEngine.Phase? = null
     private var loaderResetAt = -1L
     private var loaderPrevValue = 0f
+    /** 当前读条段的回退时长（镜像引擎 spinRecedeMs，但晚一帧切换，保证回退起点值捕获正确） */
+    private var activeRecedeMs = 0L
 
     // —— 顶栏模式下拉 ——
     private var menuOpen = false
@@ -238,10 +245,8 @@ class ChwaziView @JvmOverloads constructor(
         hapticsOn = snapshot.hapticsOn
 
         val cheatCfg = CheatEngine.Config(
-            enabled = snapshot.cheatEnabled,
-            pressureOn = snapshot.pressureOn,
-            tiltOn = snapshot.tiltOn,
-            liftOn = snapshot.liftOn,
+            enabled = snapshot.cheatChannel != CheatEngine.CHANNEL_OFF,
+            channel = snapshot.cheatChannel,
             sensitivity = snapshot.sensitivity,
         )
         val gameCfg = GameEngine.Config(
@@ -287,6 +292,15 @@ class ChwaziView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        // 顶栏避让：取状态栏与挖孔 inset 的较大值，旧无挖孔设备两者皆 0、维持原位
+        setOnApplyWindowInsetsListener { _, insets ->
+            val compat = WindowInsetsCompat.toWindowInsetsCompat(insets)
+            safeTopPx = maxOf(
+                compat.getInsets(WindowInsetsCompat.Type.statusBars()).top,
+                compat.getInsets(WindowInsetsCompat.Type.displayCutout()).top,
+            ).toFloat()
+            insets
+        }
         registerSensor()
     }
 
@@ -543,20 +557,30 @@ class ChwaziView @JvmOverloads constructor(
             baseRadius *= (5f / count.toFloat()).toDouble().pow(0.35).toFloat()
         }
 
-        // 成员变动锚点：色环全员重扫；读条锚点变化（读条重启）触发读条弧退回
+        // 成员变动锚点：等待/就位阶段色环全员重扫；读条阶段色环不重扫（新手指各自快速补圈）
         val membershipKey = engine.pointers.joinToString(",") { "${it.id}:${it.isDown}" }
         if (membershipKey != lastMembership) {
-            loaderPrevValue = currentLoaderValue(now)
             lastMembership = membershipKey
             membershipChangedAt = now
-            loaderResetAt = now
         }
-        if (engine.spinStartAt != lastSpinStart) {
-            if (loaderResetAt < 0 || now - loaderResetAt > 50) {
-                loaderPrevValue = currentLoaderValue(now)
+        // 读条锚点：进入 SPIN 时弧从 0 连续扫入（不继承旧值，避免进第二圈闪现残弧）；
+        // 读条中途成员变动（spinStart 重置）才从当前弧值慢速退回
+        if (engine.phase != lastPhase) {
+            lastPhase = engine.phase
+            if (engine.phase == GameEngine.Phase.SPIN) {
+                loaderPrevValue = 0f
                 loaderResetAt = now
+                lastSpinStart = engine.spinStartAt
+                activeRecedeMs = engine.spinRecedeMs
             }
+        }
+        if (engine.spinStartAt != lastSpinStart && engine.phase == GameEngine.Phase.SPIN) {
+            // 先用旧 recede 算出回退起点值（引擎 spinRecedeMs 已是新值，不能直接用），
+            // 再切换到新 recede，回退段才画得出弧长
+            loaderPrevValue = currentLoaderValue(now)
+            loaderResetAt = now
             lastSpinStart = engine.spinStartAt
+            activeRecedeMs = engine.spinRecedeMs
         }
 
         when (engine.phase) {
@@ -583,33 +607,54 @@ class ChwaziView @JvmOverloads constructor(
         if (!idle) postInvalidateOnAnimation()
     }
 
-    /** 读条弧当前值 0..1：退回段（锚点重置后 300ms）从上次值回落，之后重新扫入 */
+    /** 读条弧当前值 0..1：先按引擎 spinRecedeMs 从上次值回落（正常进读条为 0，直接扫入），
+     *  之后用 SPIN_SWEEP_MS 扫满一圈；引擎结算窗口与此严格对齐，两圈连续无空档 */
     private fun currentLoaderValue(now: Long): Float {
         if (engine.phase != GameEngine.Phase.SPIN || loaderResetAt < 0) return 0f
         val sinceReset = now - loaderResetAt
-        if (sinceReset < LOADER_RECEDE_MS) {
-            return loaderPrevValue * (1f - sinceReset.toFloat() / LOADER_RECEDE_MS)
+        val recede = activeRecedeMs
+        if (sinceReset < recede) {
+            return loaderPrevValue * (1f - sinceReset.toFloat() / recede)
         }
-        val linear = ((sinceReset - LOADER_RECEDE_MS).toFloat() / LOADER_SWEEP_MS).coerceIn(0f, 1f)
+        val linear = ((sinceReset - recede).toFloat() / GameEngine.SPIN_SWEEP_MS).coerceIn(0f, 1f)
         return accelDecel(linear)
     }
 
-    /** 在屏触点：各自弹入（按下起 450ms 过冲）+ 色环全员重扫 + 持续呼吸；读条阶段叠加浅色读条弧 */
+    /** 在屏触点：各自弹入（按下起 450ms 过冲）+ 持续呼吸。
+     *  第一圈（色环弧，每指独立）：落下后单向张开；等待/就位阶段随成员变动回退重扫；
+     *  读条阶段新加入手指快速张开（与旧读条弧回退共用时钟）。
+     *  第二圈（读条弧，全员同步）：与第一圈同起点（单向满圈合拢于起点自身），
+     *  成员变动时尾端缩回、起点继续旋转，重开后从同一起点重新张开。 */
     private fun drawFingers(canvas: Canvas, now: Long, baseRadius: Float, withLoader: Boolean) {
-        val sinceChange = now - membershipChangedAt
-        val ringSweep = 360f * accelDecel((sinceChange.toFloat() / SWEEP_MS).coerceIn(0f, 1f))
+        val circle1Shared = accelDecel(((now - membershipChangedAt).toFloat() / SWEEP_MS).coerceIn(0f, 1f))
         val loaderValue = currentLoaderValue(now)
 
         for (p in engine.pointers) {
             val idx = p.colorIndex % 10
+            // 弧尾端相位：随机起始 + 绕圆持续旋转（尾端刚性跟随转盘，头端向前张开）
+            val startDeg = arcRotation(now, p)
             if (p.isDown) {
                 // 弹入按各自按下时刻（对齐原版 per-player grow）；复活按回不重播
                 val growT = ((now - p.downTime).toFloat() / GROW_MS).coerceIn(0f, 1f)
                 val grow = 0.3f + 0.7f * easeOutBack(growT)
                 val r = baseRadius * grow * breath(now, p.id)
-                drawFingerCircle(canvas, p.x, p.y, r, mainColors[idx], ringColors[idx], ringSweep)
-                if (withLoader) {
-                    drawArcBand(canvas, p.x, p.y, r, clearColors[idx], 360f * loaderValue)
+                val joinT = p.joinSpinAt
+                val firstCircleStart = maxOf(joinT, loaderResetAt)
+                val circle1 = when {
+                    withLoader && joinT > 0L ->
+                        accelDecel(((now - firstCircleStart).toFloat() / NEW_SWEEP_MS).coerceIn(0f, 1f))
+                    withLoader -> 1f
+                    else -> circle1Shared
+                }
+                drawFingerCircle(
+                    canvas, p.x, p.y, r,
+                    mainColors[idx], ringColors[idx], 360f * circle1, startDeg
+                )
+                // 第二圈：新手指第一圈未张开完前不显示
+                val newCircleDone = !withLoader || joinT <= 0L ||
+                        now - firstCircleStart >= NEW_SWEEP_MS
+                if (withLoader && newCircleDone) {
+                    drawArcBand(canvas, p.x, p.y, r, clearColors[idx], 360f * loaderValue, startDeg)
                 }
             } else {
                 // 按回等待窗口内的离场触点：整体缩小消失（对齐原版 dying）
@@ -617,7 +662,7 @@ class ChwaziView @JvmOverloads constructor(
                 if (dt < DIE_MS) {
                     drawFingerCircle(
                         canvas, p.x, p.y, baseRadius * (1f - dt.toFloat() / DIE_MS),
-                        mainColors[idx], ringColors[idx], ringSweep
+                        mainColors[idx], ringColors[idx], 360f * circle1Shared, startDeg
                     )
                 }
             }
@@ -662,7 +707,7 @@ class ChwaziView @JvmOverloads constructor(
             if (scale > 0f) {
                 drawFingerCircle(
                     canvas, spot.x, spot.y, baseRadius * scale * breath(now, spot.id),
-                    main, ring, 360f
+                    main, ring, 360f, 0f
                 )
             }
         }
@@ -695,12 +740,15 @@ class ChwaziView @JvmOverloads constructor(
         if (shrink > 0f) {
             drawFingerCircle(
                 canvas, spot.x, spot.y, baseRadius * shrink * breath(now, spot.id),
-                mainColors[idx], ringColors[idx], 360f
+                mainColors[idx], ringColors[idx], 360f, 0f
             )
         }
     }
 
-    /** 原版触点样式：大色盘（0.73R）+ 细缝 + 粗外环带（0.20R），环带可部分扫入 */
+    /** 原版触点样式：大色盘（0.70R）+ 细缝 + 粗外环带（0.20R）。
+     *  环带为单向张开弧：尾端刚性跟随转盘（随 startDeg 以旋转速度前进），
+     *  头端沿旋转同方向张开 angleDeg ∈ [0,360]，在转速之上叠加张开速度——
+     *  头尾同向前进、头快尾慢（对齐原版）。满弧用 drawCircle 渲染，无接缝毛刺。 */
     private fun drawFingerCircle(
         canvas: Canvas,
         x: Float,
@@ -708,22 +756,43 @@ class ChwaziView @JvmOverloads constructor(
         radius: Float,
         mainColor: Int,
         ringColor: Int,
-        ringSweepDeg: Float,
+        angleDeg: Float,
+        startDeg: Float,
     ) {
         if (radius <= 0.001f) return
         circlePaint.color = mainColor
         canvas.drawCircle(x, y, radius * DISC_RATIO, circlePaint)
-        drawArcBand(canvas, x, y, radius, ringColor, ringSweepDeg)
+        drawArcBand(canvas, x, y, radius, ringColor, angleDeg, startDeg)
     }
 
-    /** 环带弧：外径 R、带宽 0.20R，从 -90° 起扫 ringSweepDeg */
-    private fun drawArcBand(canvas: Canvas, x: Float, y: Float, radius: Float, color: Int, sweepDeg: Float) {
-        if (radius <= 0.001f || sweepDeg <= 0f) return
+    private fun drawArcBand(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        radius: Float,
+        color: Int,
+        angleDeg: Float,
+        startDeg: Float,
+    ) {
+        if (radius <= 0.001f || angleDeg <= 0f) return
         ringPaint.color = color
         ringPaint.strokeWidth = radius * RING_WIDTH
         val rr = radius * RING_MID_RATIO
-        canvas.drawArc(x - rr, y - rr, x + rr, y + rr, -90f, sweepDeg.coerceAtMost(360f), false, ringPaint)
+        if (angleDeg >= 360f) {
+            canvas.drawCircle(x, y, rr, ringPaint)
+        } else {
+            // 弧段 [startDeg, startDeg+angleDeg]：尾端随转盘以旋转速度前进，
+            // 头端以旋转+张开速度前进——头尾同向、头快尾慢（对齐原版）
+            canvas.drawArc(
+                x - rr, y - rr, x + rr, y + rr,
+                -90f + startDeg, angleDeg, false, ringPaint
+            )
+        }
     }
+
+    /** 弧起点相位：随机起始 + 绕圆持续旋转（尾端因速度抵消停在惯性系原处） */
+    private fun arcRotation(now: Long, p: Pointer): Float =
+        p.arcStartDeg + ROT_DEG_PER_S * (now - p.downTime) / 1000f
 
     /** 呼吸：±6.25%、约 0.95s 周期，相位随触点 id 错开（对齐原版随机相位） */
     private fun breath(now: Long, id: Int): Float =
@@ -731,9 +800,10 @@ class ChwaziView @JvmOverloads constructor(
 
     private fun drawTopMenu(canvas: Canvas) {
         val w = width.toFloat()
-        val pad = dp(16f)
-        pillRect.set(pad, pad, pad + dp(140f), pad + dp(45f))
-        numRect.set(w - pad - dp(45f), pad, w - pad, pad + dp(45f))
+        val padY = safeTopPx + dp(12f)
+        val padX = dp(8f)   // 水平贴边，FINGERS 胶囊与数字圆向两侧拉开
+        pillRect.set(padX, padY, padX + dp(140f), padY + dp(45f))
+        numRect.set(w - padX - dp(45f), padY, w - padX, padY + dp(45f))
 
         pillPaint.color = PILL_BG
         canvas.drawRoundRect(pillRect, dp(22.5f), dp(22.5f), pillPaint)
@@ -774,7 +844,7 @@ class ChwaziView @JvmOverloads constructor(
         val chipRows = (values.size + perRow - 1) / perRow
         val panelH = dp(10f) + 2 * rowH + rowGap + dp(8f) +
                 chipRows * chip + (chipRows - 1) * chipGap + dp(10f)
-        panelRect.set(dp(16f), pad + dp(45f) + dp(8f), dp(16f) + dp(176f), 0f)
+        panelRect.set(dp(16f), padY + dp(45f) + dp(8f), dp(16f) + dp(176f), 0f)
         panelRect.bottom = panelRect.top + panelH
         pillPaint.color = PILL_BG
         canvas.drawRoundRect(panelRect, dp(12f), dp(12f), pillPaint)
@@ -915,9 +985,10 @@ class ChwaziView @JvmOverloads constructor(
 
         // —— 动画时长（ms） ——
         private const val GROW_MS = 450L          // 落下弹入（0.3 → 过冲 → 1）
-        private const val SWEEP_MS = 1000L        // 色环扫入一圈
-        private const val LOADER_RECEDE_MS = 300L // 成员变动后读条弧退回
-        private const val LOADER_SWEEP_MS = 1600L // 读条弧扫入一圈（引擎 SPIN_MS = 两者之和）
+        private const val SWEEP_MS = 1500L        // 色环单向张开一圈（张开速度 241°/s=旋转速度，尾端惯性静止）
+        private const val NEW_SWEEP_MS = 1500L    // 读条阶段新手指张开第一圈（与旧弧回退同速同止）
+        /** 弧旋转速度：读条两圈整体绕圆心缓慢转动，起始点随机（对齐原版弧不停旋转的行为） */
+        private const val ROT_DEG_PER_S = 241f  // 原版：angularSpeed -0.67，约 241°/s（1.5s/圈）
         private const val DIE_MS = 300L           // 离场/消失收缩
         private const val FLOOD_MS = 300L         // 结果赢家色合拢
         private const val HOLE_OPEN_MS = 300L     // 消失时黑色扩散
